@@ -1,0 +1,9 @@
+# requirements.txt for CoachSync backend
+fastapi
+uvicorn
+celery
+redis
+python-dotenv
+sqlalchemy[asyncio]
+boto3
+httpx
