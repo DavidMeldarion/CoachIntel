@@ -11,7 +11,7 @@ function setUserCookie(token: string) {
 async function handleGoogleLogin(router: any, setError: any) {
   try {
     // Redirect to backend Google OAuth endpoint
-    window.location.href = process.env.NEXT_PUBLIC_API_URL + "/auth/google?intent=login";
+    window.location.href = (process.env.NEXT_PUBLIC_BROWSER_API_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000") + "/auth/google?intent=login";
   } catch (err) {
     setError("Google login failed");
   }
@@ -23,17 +23,11 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-    useEffect(() => {
+  useEffect(() => {
     // Check for error parameter in URL (from Google OAuth redirect)
     const urlParams = new URLSearchParams(window.location.search);
     const errorParam = urlParams.get('error');
     const nextErrorParam = searchParams.get('error');
-    console.log('Full URL:', window.location.href); // Debug log
-    console.log('Search params:', window.location.search); // Debug log
-    console.log('URL error parameter:', errorParam); // Debug log
-    console.log('Next.js error parameter:', nextErrorParam); // Debug log
-    console.log('All URL params:', Array.from(urlParams.entries())); // Debug log
-    console.log('All searchParams:', Array.from(searchParams.entries())); // Debug log
     
     if (errorParam === 'account_exists' || nextErrorParam === 'account_exists') {
       setError("Account already exists. Please log in instead.");
@@ -43,9 +37,8 @@ export default function Login() {
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    try {
-      const res = await axios.post(
-        process.env.NEXT_PUBLIC_API_URL + "/login",
+    try {      const res = await axios.post(
+        process.env.NEXT_PUBLIC_BROWSER_API_URL + "/login",
         { email, password },
         { withCredentials: true }
       );

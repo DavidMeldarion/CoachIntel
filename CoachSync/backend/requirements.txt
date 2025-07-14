@@ -5,6 +5,7 @@ celery
 redis
 python-dotenv
 sqlalchemy[asyncio]
+alembic
 boto3
 httpx
 httpx

@@ -1,18 +1,244 @@
 # Fireflies/Zoom API integration helpers for CoachSync
 import os
 import httpx
+import json
+from datetime import datetime, timedelta
+from typing import Optional, List, Dict, Any
 
-FIRELIES_API_KEY = os.getenv("FIREFLIES_API_KEY")
+FIREFLIES_API_KEY = os.getenv("FIREFLIES_API_KEY")
 ZOOM_JWT = os.getenv("ZOOM_JWT")
+FIREFLIES_API_URL = "https://api.fireflies.ai/graphql"
 
-async def fetch_fireflies_meetings(user_email: str, api_key: str = None):
-    """Fetch meetings from Fireflies.ai for a given user."""
-    url = f"https://api.fireflies.ai/v1/meetings?user_email={user_email}"
-    headers = {"x-api-key": api_key} if api_key else {}
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(url, headers=headers)
-        resp.raise_for_status()
-        return resp.json()
+async def fetch_fireflies_meetings(user_email: str, api_key: str = None, limit: int = 10) -> Dict[str, Any]:
+    """
+    Fetch meetings from Fireflies.ai for a given user using GraphQL API.
+    
+    Args:
+        user_email: Email of the user to fetch meetings for
+        api_key: Fireflies API key (if not provided, uses env var)
+        limit: Maximum number of meetings to fetch (default 10)
+    
+    Returns:
+        Dict containing meetings data or error message
+    """
+    if not api_key:
+        api_key = FIREFLIES_API_KEY
+    
+    if not api_key:
+        return {"error": "Fireflies API key not provided"}
+    
+    # GraphQL query to fetch transcripts (meetings)
+    query = """
+    query GetTranscripts($limit: Int!, $userEmail: String) {
+        transcripts(limit: $limit, user_email: $userEmail) {
+            id
+            title
+            date
+            duration
+            meeting_url
+            summary {
+                keywords
+                action_items
+                outline
+                shorthand_bullet
+                overview
+            }
+            participants {
+                name
+                email
+            }
+            sentences {
+                text
+                speaker_name
+                start_time
+                end_time
+            }
+        }
+    }
+    """
+    
+    variables = {
+        "limit": limit,
+        "userEmail": user_email
+    }
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    
+    payload = {
+        "query": query,
+        "variables": variables
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                FIREFLIES_API_URL, 
+                headers=headers, 
+                json=payload
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            
+            # Check for GraphQL errors
+            if "errors" in result:
+                return {
+                    "error": "Fireflies API error",
+                    "details": result["errors"]
+                }
+            
+            # Transform the data for easier consumption
+            transcripts = result.get("data", {}).get("transcripts", [])
+            
+            meetings = []
+            for transcript in transcripts:
+                # Convert Fireflies transcript to our meeting format
+                meeting = {
+                    "id": transcript.get("id"),
+                    "title": transcript.get("title", "Untitled Meeting"),
+                    "date": transcript.get("date"),
+                    "duration": transcript.get("duration"),
+                    "meeting_url": transcript.get("meeting_url"),
+                    "participants": [
+                        {
+                            "name": p.get("name", "Unknown"),
+                            "email": p.get("email", "")
+                        }
+                        for p in transcript.get("participants", [])
+                    ],
+                    "summary": {
+                        "keywords": transcript.get("summary", {}).get("keywords", []),
+                        "action_items": transcript.get("summary", {}).get("action_items", []),
+                        "outline": transcript.get("summary", {}).get("outline", ""),
+                        "overview": transcript.get("summary", {}).get("overview", ""),
+                        "key_points": transcript.get("summary", {}).get("shorthand_bullet", [])
+                    },
+                    "transcript_available": len(transcript.get("sentences", [])) > 0,
+                    "source": "fireflies"
+                }
+                meetings.append(meeting)
+            
+            return {
+                "meetings": meetings,
+                "total_count": len(meetings),
+                "source": "fireflies"
+            }
+            
+    except httpx.TimeoutException:
+        return {"error": "Request timeout - Fireflies API took too long to respond"}
+    except httpx.HTTPStatusError as e:
+        return {
+            "error": f"HTTP error {e.response.status_code}",
+            "details": f"Fireflies API returned: {e.response.text}"
+        }
+    except Exception as e:
+        return {
+            "error": "Unexpected error occurred",
+            "details": str(e)
+        }
+
+async def get_fireflies_meeting_details(transcript_id: str, api_key: str = None) -> Dict[str, Any]:
+    """
+    Get detailed information for a specific Fireflies meeting/transcript.
+    
+    Args:
+        transcript_id: ID of the transcript to fetch details for
+        api_key: Fireflies API key
+    
+    Returns:
+        Dict containing detailed meeting data
+    """
+    if not api_key:
+        api_key = FIREFLIES_API_KEY
+    
+    if not api_key:
+        return {"error": "Fireflies API key not provided"}
+    
+    query = """
+    query GetTranscript($transcriptId: String!) {
+        transcript(id: $transcriptId) {
+            id
+            title
+            date
+            duration
+            meeting_url
+            audio_url
+            summary {
+                keywords
+                action_items
+                outline
+                shorthand_bullet
+                overview
+                bullet_gist
+            }
+            participants {
+                name
+                email
+                user_id
+            }
+            sentences {
+                text
+                speaker_name
+                start_time
+                end_time
+                speaker_id
+            }
+            chapters {
+                title
+                start_time
+                end_time
+                gist
+            }
+        }
+    }
+    """
+    
+    variables = {"transcriptId": transcript_id}
+    
+    headers = {
+        "Content-Type": "application/json", 
+        "Authorization": f"Bearer {api_key}"
+    }
+    
+    payload = {
+        "query": query,
+        "variables": variables
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                FIREFLIES_API_URL,
+                headers=headers,
+                json=payload
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            
+            if "errors" in result:
+                return {
+                    "error": "Fireflies API error", 
+                    "details": result["errors"]
+                }
+            
+            transcript = result.get("data", {}).get("transcript")
+            if not transcript:
+                return {"error": "Transcript not found"}
+            
+            return {
+                "meeting": transcript,
+                "source": "fireflies"
+            }
+            
+    except Exception as e:
+        return {
+            "error": "Failed to fetch meeting details",
+            "details": str(e)
+        }
 
 async def fetch_zoom_meetings(user_id: str, jwt: str = None):
     """Fetch meetings from Zoom for a given user."""

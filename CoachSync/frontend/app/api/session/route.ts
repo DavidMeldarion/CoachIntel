@@ -11,8 +11,41 @@ export async function GET(request: Request) {
   }
   try {
     const secret = new TextEncoder().encode(JWT_SECRET);
-    await jwtVerify(match[1], secret);
-    return NextResponse.json({ loggedIn: true });
+    const { payload } = await jwtVerify(match[1], secret);
+    
+    // Fetch user information from backend
+    try {
+      const backendResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/me`, {
+        headers: {
+          'Cookie': `user=${match[1]}`
+        }
+      });      if (backendResponse.ok) {
+        const userData = await backendResponse.json();
+        
+        return NextResponse.json({ 
+          loggedIn: true, 
+          user: {
+            email: userData.email,
+            first_name: userData.first_name,
+            last_name: userData.last_name,
+            name: userData.name // Keep for backward compatibility
+          }        });
+      } else {
+        console.error('Backend response not ok:', backendResponse.status, backendResponse.statusText);
+      }
+    } catch (error) {
+      console.error('Failed to fetch user data:', error);
+    }
+      // Fallback: just return logged in status with email from JWT
+    return NextResponse.json({ 
+      loggedIn: true, 
+      user: { 
+        email: payload.sub,
+        first_name: null,
+        last_name: null,
+        name: null 
+      }
+    });
   } catch {
     return NextResponse.json({ loggedIn: false });
   }
