@@ -7,3 +7,9 @@ python-dotenv
 sqlalchemy[asyncio]
 boto3
 httpx
+httpx
+psycopg2-binary
+asyncpg
+PyJWT
+python-multipart
+requests

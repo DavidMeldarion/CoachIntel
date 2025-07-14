@@ -15,9 +15,9 @@ export default function Timeline() {
   }, []);
 
   return (
-    <main className="flex flex-col items-center justify-center min-h-screen p-8">
-      <h2 className="text-2xl font-bold mb-4">Session Timeline</h2>
-      <div className="w-full max-w-md bg-white rounded shadow p-6">
+    <main className="flex flex-col items-center justify-center min-h-screen p-8 bg-gray-50">
+      <h2 className="text-2xl font-bold mb-6 text-blue-700">Timeline</h2>
+      <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-2xl flex flex-col gap-6 border border-gray-100">
         {loading ? (
           <div>Loading...</div>
         ) : (
@@ -30,6 +30,8 @@ export default function Timeline() {
             ))}
           </ul>
         )}
+        {/* Add your timeline content here, styled similarly */}
+        <div className="text-gray-700 text-center">Timeline coming soon.</div>
       </div>
     </main>
   );

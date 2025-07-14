@@ -2,12 +2,18 @@
 
 CoachSync is a SaaS web app for personal trainers and fitness coaches to manage 1-on-1 client coaching with AI-powered call transcription, summarization, and workflow automation.
 
+## Quick Start
+
+1. **Setup**: See [SETUP.md](./SETUP.md) for detailed environment configuration
+2. **Run**: `docker-compose up -d`
+3. **Access**: Frontend at http://localhost:3000, Backend API at http://localhost:8000
+
 ## Monorepo Structure
 
 - `/frontend` — Next.js (App Router) + Tailwind CSS UI
 - `/backend` — FastAPI REST API, Celery (Redis), background jobs
-- PostgreSQL (Supabase/Railway), S3-compatible storage, email (Postmark/Resend)
-- Auth: Google Sign-In (Firebase Auth or Clerk)
+- PostgreSQL (Docker), Redis (Docker), S3-compatible storage
+- Auth: Google OAuth + JWT cookies
 - Docker for local dev and deployment
 
 ## MVP Features
