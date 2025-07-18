@@ -3,24 +3,16 @@
 import { fetchSessions } from "../../lib/api";
 import { useEffect, useState } from "react";
 
-export default function Timeline() {
-  const [sessions, setSessions] = useState<any[]>([]);
+export default function MeetingTimeline() {
   const [meetings, setMeetings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [meetingsLoading, setMeetingsLoading] = useState(false);
   const [error, setError] = useState("");
   const [selectedClient, setSelectedClient] = useState<string>("");
-
-  useEffect(() => {
-    fetchSessions().then((data) => {
-      setSessions(data);
-      setLoading(false);
-    });
-  }, []);
+  const [selectedType, setSelectedType] = useState<string>("");
 
   // Fetch stored meetings from backend
   const fetchStoredMeetings = async () => {
-    setMeetingsLoading(true);
+    setLoading(true);
     setError("");
     try {
       const response = await fetch("/api/meetings", { credentials: "include" });
@@ -30,7 +22,7 @@ export default function Timeline() {
     } catch (err) {
       setError(`Failed to fetch meetings: ${err}`);
     } finally {
-      setMeetingsLoading(false);
+      setLoading(false);
     }
   };
 
@@ -41,59 +33,59 @@ export default function Timeline() {
     return () => clearInterval(interval);
   }, []);
 
-  // Get unique client names from meetings
+  // Get unique client names and meeting types from meetings
   const clientNames = Array.from(new Set(meetings.map((m) => m.client_name).filter(Boolean)));
+  const meetingTypes = Array.from(new Set(meetings.map((m) => m.source).filter(Boolean)));
 
-  // Filter meetings by selected client
-  const filteredMeetings = selectedClient
-    ? meetings.filter((m) => m.client_name === selectedClient)
-    : meetings;
+  // Filter meetings by selected client and type
+  const filteredMeetings = meetings.filter((m) => {
+    const clientMatch = selectedClient ? m.client_name === selectedClient : true;
+    const typeMatch = selectedType ? m.source === selectedType : true;
+    return clientMatch && typeMatch;
+  });
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen p-8 bg-gray-50">
-      <h2 className="text-2xl font-bold mb-6 text-blue-700">Timeline</h2>
-      
-      {/* Sessions Section */}
-      <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-4xl mb-6 border border-gray-100">
-        <h3 className="text-lg font-semibold mb-4">Uploaded Sessions</h3>
-        {loading ? (
-          <div>Loading sessions...</div>
-        ) : (
-          <ul className="divide-y">
-            {sessions.length > 0 ? sessions.map((s, i) => (
-              <li className="py-2" key={i}>
-                <div className="font-semibold">Session {s.id}</div>
-                <div className="text-gray-700 mt-1">{s.summary}</div>
-              </li>
-            )) : (
-              <div className="text-gray-500 text-center py-4">No uploaded sessions found</div>
-            )}
-          </ul>
-        )}
-      </div>
-
-      {/* Meetings Section */}
+      <h2 className="text-2xl font-bold mb-6 text-blue-700">Meeting Timeline</h2>
       <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-4xl border border-gray-100">
         <h3 className="text-lg font-semibold mb-4">Your Meetings</h3>
-        {/* Client Filter Dropdown */}
-        {clientNames.length > 1 && (
-          <div className="mb-4 flex items-center gap-2">
-            <label htmlFor="client-filter" className="font-medium text-gray-700">Filter by client:</label>
-            <select
-              id="client-filter"
-              className="border rounded px-2 py-1 text-sm"
-              value={selectedClient}
-              onChange={(e) => setSelectedClient(e.target.value)}
-            >
-              <option value="">All</option>
-              {clientNames.map((name) => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-            </select>
-          </div>
-        )}
+        {/* Filters */}
+        <div className="mb-4 flex flex-wrap gap-4 items-center">
+          {clientNames.length > 1 && (
+            <div className="flex items-center gap-2">
+              <label htmlFor="client-filter" className="font-medium text-gray-700">Filter by client:</label>
+              <select
+                id="client-filter"
+                className="border rounded px-2 py-1 text-sm"
+                value={selectedClient}
+                onChange={(e) => setSelectedClient(e.target.value)}
+              >
+                <option value="">All</option>
+                {clientNames.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {meetingTypes.length > 1 && (
+            <div className="flex items-center gap-2">
+              <label htmlFor="type-filter" className="font-medium text-gray-700">Filter by type:</label>
+              <select
+                id="type-filter"
+                className="border rounded px-2 py-1 text-sm"
+                value={selectedType}
+                onChange={(e) => setSelectedType(e.target.value)}
+              >
+                <option value="">All</option>
+                {meetingTypes.map((type) => (
+                  <option key={type} value={type}>{type.charAt(0).toUpperCase() + type.slice(1)}</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
         <div className="max-h-[600px] overflow-y-auto">
-          {meetingsLoading ? (
+          {loading ? (
             <div>Loading meetings...</div>
           ) : error ? (
             <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">{error}</div>
@@ -105,22 +97,21 @@ export default function Timeline() {
                     <h4 className="font-semibold text-lg">{meeting.title}</h4>
                     <span className="text-sm text-gray-500">{meeting.date}</span>
                   </div>
-                  
                   <div className="text-sm text-gray-600 mb-2">
                     Duration: {Math.floor(meeting.duration / 60)}m {meeting.duration % 60}s
                   </div>
-                  
                   <div className="mb-3">
                     <strong>Client:</strong> {meeting.client_name}
                   </div>
-                  
+                  <div className="mb-3">
+                    <strong>Type:</strong> {meeting.source ? meeting.source.charAt(0).toUpperCase() + meeting.source.slice(1) : "Unknown"}
+                  </div>
                   {meeting.transcript?.summary?.overview && (
                     <div className="mb-3">
                       <strong>Overview:</strong>
                       <p className="text-gray-700 mt-1">{meeting.transcript.summary.overview}</p>
                     </div>
                   )}
-                  
                   {meeting.transcript?.summary?.keywords?.length > 0 && (
                     <div className="mb-3">
                       <strong>Keywords:</strong>
@@ -131,7 +122,6 @@ export default function Timeline() {
                       </div>
                     </div>
                   )}
-                  
                   {meeting.transcript?.summary?.action_items?.length > 0 && (
                     <div>
                       <strong>Action Items:</strong>

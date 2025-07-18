@@ -85,7 +85,6 @@ export default function Navbar() {
         {sessionData.loggedIn && (
           <>
             <Link href="/dashboard" className="text-gray-700 font-medium hover:text-blue-700 transition">Dashboard</Link>
-            <Link href="/upload" className="text-gray-700 font-medium hover:text-blue-700 transition">Upload</Link>
             <Link href="/timeline" className="text-gray-700 font-medium hover:text-blue-700 transition">Timeline</Link>
           </>
         )}
@@ -119,6 +118,13 @@ export default function Navbar() {
                 onClick={() => setDropdownOpen(false)}
               >
                 My Profile
+              </Link>
+              <Link
+                href="/upload"
+                className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition"
+                onClick={() => setDropdownOpen(false)}
+              >
+                Upload Audio
               </Link>
               <hr className="my-1" />
               <Link

@@ -5,36 +5,52 @@ import { uploadAudio } from '../../lib/api';
 
 export default function Upload() {
   const [file, setFile] = useState<File | null>(null);
-  const [status, setStatus] = useState<string>('');
+  const [status, setStatus] = useState<string>("");
+  const [isUploading, setIsUploading] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!file) return;
-    setStatus('Uploading...');
+    if (!file) {
+      setStatus("Please select an audio file.");
+      return;
+    }
+    setIsUploading(true);
+    setStatus("");
     try {
       const res = await uploadAudio(file);
       setStatus(`Uploaded: ${res.filename}`);
+      setFile(null);
     } catch (err) {
-      setStatus('Upload failed');
+      setStatus("Upload failed. Please try again.");
+    } finally {
+      setIsUploading(false);
     }
   }
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen p-8 bg-gray-50">
-      <h2 className="text-2xl font-bold mb-6 text-blue-700">Upload Audio</h2>
       <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-md flex flex-col gap-6 border border-gray-100">
+        <h2 className="text-2xl font-bold mb-4 text-blue-700 text-center">Upload Audio</h2>
         <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
-          <label className="font-semibold">Audio File (.mp3, .m4a)</label>
+          <label htmlFor="audio-upload" className="font-semibold text-gray-700">Audio File (.mp3, .m4a)</label>
           <input
+            id="audio-upload"
             type="file"
             accept="audio/*"
-            className="border rounded p-2"
+            className="border rounded p-2 focus:outline-none focus:ring-2 focus:ring-blue-200"
             onChange={e => setFile(e.target.files?.[0] || null)}
+            disabled={isUploading}
           />
-          <button type="submit" className="btn-primary">Upload</button>
-          {status && <div className="mt-2 text-sm">{status}</div>}
+          <button
+            type="submit"
+            className={`px-4 py-2 rounded bg-blue-600 text-white font-semibold transition hover:bg-blue-700 ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+            disabled={isUploading}
+          >
+            {isUploading ? "Uploading..." : "Upload"}
+          </button>
+          {status && <div className={`mt-2 text-sm text-center ${status.includes('failed') ? 'text-red-600' : 'text-green-700'}`}>{status}</div>}
         </form>
-        <div className="text-gray-700 text-center">Upload form coming soon.</div>
+        <div className="text-gray-500 text-center text-sm mt-2">Supported formats: .mp3, .m4a. Max size 100MB.</div>
       </div>
     </main>
   );
