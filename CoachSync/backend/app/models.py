@@ -1,9 +1,10 @@
 # User model for CoachSync
-from sqlalchemy import Column, Integer, String, create_engine, select
+from sqlalchemy import Column, Integer, String, create_engine, select, ForeignKey, DateTime, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, relationship
 import os
+from sqlalchemy.dialects.postgresql import JSON
 
 Base = declarative_base()
 
@@ -18,6 +19,9 @@ class User(Base):
     phone = Column(String, nullable=True)
     address = Column(String, nullable=True)
     
+    # Relationships
+    meetings = relationship("Meeting", back_populates="user")
+
     @property
     def name(self):
         """Compatibility property to return full name"""
@@ -33,6 +37,30 @@ class User(Base):
         else:
             self.first_name = ""
             self.last_name = ""
+
+class Meeting(Base):
+    __tablename__ = "meetings"
+    id = Column(String, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    client_name = Column(String)
+    title = Column(String)
+    date = Column(DateTime)
+    duration = Column(Integer)
+    source = Column(String)
+    transcript_id = Column(String)
+    # Relationships
+    user = relationship("User", back_populates="meetings")
+    transcript = relationship("Transcript", back_populates="meeting", uselist=False)
+
+class Transcript(Base):
+    __tablename__ = "transcripts"
+    id = Column(String, primary_key=True)
+    meeting_id = Column(String, ForeignKey("meetings.id"))
+    full_text = Column(Text)
+    summary = Column(JSON)
+    action_items = Column(JSON)
+    # Relationship
+    meeting = relationship("Meeting", back_populates="transcript")
 
 # Async engine for FastAPI app
 ASYNC_DATABASE_URL = os.getenv("ASYNC_DATABASE_URL") or os.getenv("DATABASE_URL")
@@ -68,7 +96,8 @@ async def create_or_update_user(email: str, name: str = None, first_name: str = 
             if last_name is not None:
                 user.last_name = last_name
             if name and not first_name and not last_name:
-                user.name = name  # Uses the setter to split name            if fireflies_api_key is not None:
+                user.name = name  # Uses the setter to split name
+            if fireflies_api_key is not None:
                 user.fireflies_api_key = fireflies_api_key
             if zoom_jwt is not None:
                 user.zoom_jwt = zoom_jwt

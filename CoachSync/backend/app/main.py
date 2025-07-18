@@ -9,9 +9,11 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from datetime import datetime, timedelta
 import requests
+from sqlalchemy.orm import selectinload
 
 from .integrations import fetch_fireflies_meetings, fetch_zoom_meetings, get_fireflies_meeting_details
-from .models import User, create_or_update_user, get_user_by_email
+from .models import User, create_or_update_user, get_user_by_email, Meeting, Transcript, AsyncSessionLocal
+from sqlalchemy import select
 
 app = FastAPI()
 
@@ -78,21 +80,42 @@ def summarize():
 async def get_external_meetings(
     request: Request,
     source: str = Query(..., description="fireflies or zoom"),
-    user: str = Query(..., description="user email for Fireflies or user id for Zoom"),
     limit: int = Query(10, description="Maximum number of meetings to fetch")
 ):
     """
-    Fetch external meetings from Fireflies.ai or Zoom.
+    Fetch external meetings from Fireflies.ai or Zoom for the authenticated user.
     
     Query Parameters:
     - source: "fireflies" or "zoom"
-    - user: user email for Fireflies or user id for Zoom
     - limit: maximum number of meetings to return (default 10)
-    """
+    """    # Extract JWT token from cookie to get the user
+    cookie_header = request.headers.get("cookie", "")
+    token = None
+    for cookie in cookie_header.split(";"):
+        cookie = cookie.strip()
+        if cookie.startswith("access_token="):
+            token = cookie.split("access_token=")[1]
+            break
+        elif cookie.startswith("user="):
+            token = cookie.split("user=")[1]
+            break
     
+    if not token:
+        raise HTTPException(status_code=401, detail="No authentication token")
+    
+    try:
+        # Decode JWT token
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_email = payload.get("sub")
+        if not user_email:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")    
     if source == "fireflies":
         # Get the user's stored Fireflies API key from their profile
-        user_profile = await get_user_by_email(user)
+        user_profile = await get_user_by_email(user_email)
         if not user_profile or not user_profile.fireflies_api_key:
             return {
                 "error": "Fireflies API key not found in user profile. Please add your API key in the profile settings.",
@@ -101,11 +124,11 @@ async def get_external_meetings(
                 "source": "fireflies"
             }
         
-        result = await fetch_fireflies_meetings(user, user_profile.fireflies_api_key, limit)
+        result = await fetch_fireflies_meetings(user_email, user_profile.fireflies_api_key, limit)
         return result
     elif source == "zoom":
         # Get the user's stored Zoom JWT from their profile
-        user_profile = await get_user_by_email(user)
+        user_profile = await get_user_by_email(user_email)
         if not user_profile or not user_profile.zoom_jwt:
             return {
                 "error": "Zoom JWT not found in user profile. Please add your Zoom JWT in the profile settings.",
@@ -114,7 +137,7 @@ async def get_external_meetings(
                 "source": "zoom"
             }
         
-        result = await fetch_zoom_meetings(user, user_profile.zoom_jwt)
+        result = await fetch_zoom_meetings(user_email, user_profile.zoom_jwt)
         return result
     else:
         return {"error": "Invalid source. Must be 'fireflies' or 'zoom'", "meetings": [], "total_count": 0}
@@ -201,7 +224,11 @@ async def login(request: Request):
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode = {"sub": email, "exp": expire}
     token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return JSONResponse({"token": token, "user": user})
+    
+    # Create response with both JSON data and cookie
+    response = JSONResponse({"token": token, "user": user})
+    response.set_cookie(key="user", value=token, httponly=True, max_age=604800, samesite="lax")
+    return response
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
@@ -376,3 +403,53 @@ async def update_user_profile(request: Request):
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+@app.get("/meetings/")
+async def get_user_meetings(request: Request):
+    # Extract JWT token from cookie
+    cookie_header = request.headers.get("cookie", "")
+    token = None
+    for cookie in cookie_header.split(";"):
+        if "user=" in cookie:
+            token = cookie.split("user=")[1].strip()
+            break
+    if not token:
+        raise HTTPException(status_code=401, detail="No authentication token")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_email = payload.get("sub")
+        if not user_email:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    # Query meetings for this user
+    async with AsyncSessionLocal() as session:
+        from app.models import get_user_by_email
+        user = await get_user_by_email(user_email)
+        if not user:
+            return {"meetings": []}
+        result = await session.execute(
+            select(Meeting).options(selectinload(Meeting.transcript)).where(Meeting.user_id == user.id)
+        )
+        meetings = result.scalars().all()
+        meeting_list = []
+        for m in meetings:
+            transcript = None
+            if m.transcript:
+                transcript = {
+                    "full_text": m.transcript.full_text,
+                    "summary": m.transcript.summary,
+                    "action_items": m.transcript.action_items,
+                }
+            meeting_list.append({
+                "id": m.id,
+                "client_name": m.client_name,
+                "title": m.title,
+                "date": m.date,
+                "duration": m.duration,
+                "source": m.source,
+                "transcript": transcript
+            })
+        return {"meetings": meeting_list}

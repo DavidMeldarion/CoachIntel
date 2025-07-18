@@ -2,32 +2,31 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
   try {
+    // Use URL to extract query params only
     const { searchParams } = new URL(request.url);
     const source = searchParams.get("source");
-    const user = searchParams.get("user");
     const limit = searchParams.get("limit") || "10";
 
-    if (!source || !user) {
+    if (!source) {
       return NextResponse.json(
-        { error: "Missing required parameters: source and user" },
+        { error: "Missing required parameter: source" },
         { status: 400 }
       );
     }
 
-    // Get the user's Fireflies API key from their profile
+    // Always use the backend base URL and endpoint path directly
     const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://backend:8000";
-    
-    // For now, we'll use the backend directly
-    // In a real app, you'd get the API key from the user's profile
-    const response = await fetch(
-      `${API_BASE}/external-meetings/?source=${source}&user=${encodeURIComponent(user)}&limit=${limit}`,
-      {
-        headers: {
-          // Forward any authorization headers
-          ...request.headers,
-        },
-      }
-    );
+    const backendUrl = `${API_BASE}/external-meetings/?source=${source}&limit=${limit}`;
+
+    // Extract the 'user' cookie from the incoming request and forward it to the backend
+    const cookie = request.headers.get("cookie");
+
+    const response = await fetch(backendUrl, {
+      headers: {
+        ...(cookie ? { cookie } : {}),
+      },
+      credentials: "include",
+    });
 
     if (!response.ok) {
       throw new Error(`Backend API error: ${response.status}`);
@@ -35,7 +34,6 @@ export async function GET(request: NextRequest) {
 
     const data = await response.json();
     return NextResponse.json(data);
-    
   } catch (error) {
     console.error("Error fetching external meetings:", error);
     return NextResponse.json(

@@ -19,23 +19,21 @@ async def fetch_fireflies_meetings(user_email: str, api_key: str = None, limit: 
         limit: Maximum number of meetings to fetch (default 10)
     
     Returns:
-        Dict containing meetings data or error message
-    """
+        Dict containing meetings data or error message    """
     if not api_key:
         api_key = FIREFLIES_API_KEY
-    
     if not api_key:
         return {"error": "Fireflies API key not provided"}
     
-    # GraphQL query to fetch transcripts (meetings)
+    # GraphQL query to fetch transcripts (meetings) - optimized for timeline view
     query = """
-    query GetTranscripts($limit: Int!, $userEmail: String) {
-        transcripts(limit: $limit, user_email: $userEmail) {
+    query GetTranscripts($limit: Int!, $hostEmail: String) {
+        transcripts(limit: $limit, host_email: $hostEmail) {
             id
             title
             date
             duration
-            meeting_url
+            meeting_link
             summary {
                 keywords
                 action_items
@@ -43,23 +41,14 @@ async def fetch_fireflies_meetings(user_email: str, api_key: str = None, limit: 
                 shorthand_bullet
                 overview
             }
-            participants {
-                name
-                email
-            }
-            sentences {
-                text
-                speaker_name
-                start_time
-                end_time
-            }
+            participants
         }
     }
     """
     
     variables = {
         "limit": limit,
-        "userEmail": user_email
+        "hostEmail": user_email
     }
     
     headers = {
@@ -89,34 +78,30 @@ async def fetch_fireflies_meetings(user_email: str, api_key: str = None, limit: 
                     "error": "Fireflies API error",
                     "details": result["errors"]
                 }
-            
-            # Transform the data for easier consumption
+              # Transform the data for easier consumption
             transcripts = result.get("data", {}).get("transcripts", [])
             
             meetings = []
             for transcript in transcripts:
+                summary = transcript.get("summary") or {}
                 # Convert Fireflies transcript to our meeting format
                 meeting = {
                     "id": transcript.get("id"),
                     "title": transcript.get("title", "Untitled Meeting"),
                     "date": transcript.get("date"),
                     "duration": transcript.get("duration"),
-                    "meeting_url": transcript.get("meeting_url"),
+                    "meeting_url": transcript.get("meeting_link"),
                     "participants": [
-                        {
-                            "name": p.get("name", "Unknown"),
-                            "email": p.get("email", "")
-                        }
-                        for p in transcript.get("participants", [])
+                        {"name": name, "email": ""} 
+                        for name in transcript.get("participants", [])
                     ],
                     "summary": {
-                        "keywords": transcript.get("summary", {}).get("keywords", []),
-                        "action_items": transcript.get("summary", {}).get("action_items", []),
-                        "outline": transcript.get("summary", {}).get("outline", ""),
-                        "overview": transcript.get("summary", {}).get("overview", ""),
-                        "key_points": transcript.get("summary", {}).get("shorthand_bullet", [])
-                    },
-                    "transcript_available": len(transcript.get("sentences", [])) > 0,
+                        "keywords": summary.get("keywords") if isinstance(summary.get("keywords"), list) else [],
+                        "action_items": summary.get("action_items") if isinstance(summary.get("action_items"), list) else [],
+                        "outline": summary.get("outline", ""),
+                        "overview": summary.get("overview", ""),
+                        "key_points": summary.get("shorthand_bullet") if isinstance(summary.get("shorthand_bullet"), list) else []
+                    },                    "transcript_available": True,  # Assume transcripts are available for all meetings
                     "source": "fireflies"
                 }
                 meetings.append(meeting)
@@ -135,6 +120,8 @@ async def fetch_fireflies_meetings(user_email: str, api_key: str = None, limit: 
             "details": f"Fireflies API returned: {e.response.text}"
         }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return {
             "error": "Unexpected error occurred",
             "details": str(e)
