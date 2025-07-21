@@ -10,11 +10,17 @@ function setUserCookie(token: string) {
 
 async function handleGoogleLogin(router: any, setError: any) {
   try {
-    // Redirect to backend Google OAuth endpoint
-    window.location.href = (process.env.NEXT_PUBLIC_BROWSER_API_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000") + "/auth/google?intent=login";
+    // Redirect to backend Google OAuth endpoint (no JWT required)
+    const apiUrl = process.env.NEXT_PUBLIC_BROWSER_API_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    window.location.href = `${apiUrl}/auth/google?intent=login`;
   } catch (err) {
     setError("Google login failed");
   }
+}
+
+function isLoggedIn() {
+  // Check for JWT cookie
+  return document.cookie.includes('user=');
 }
 
 export default function Login() {
@@ -23,6 +29,13 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  useEffect(() => {
+    // Redirect logged-in users to dashboard
+    if (isLoggedIn()) {
+      router.replace('/dashboard');
+    }
+  }, [router]);
+
   useEffect(() => {
     // Check for error parameter in URL (from Google OAuth redirect)
     const urlParams = new URLSearchParams(window.location.search);
@@ -37,13 +50,20 @@ export default function Login() {
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    try {      const res = await axios.post(
+    try {
+      const res = await axios.post(
         process.env.NEXT_PUBLIC_BROWSER_API_URL + "/login",
         { email, password },
         { withCredentials: true }
       );
       const token = res.data.token || email;
       setUserCookie(token);
+      // Debug: check if cookie is set
+      const userCookie = document.cookie.split(';').find(c => c.trim().startsWith('user='));
+      if (!userCookie) {
+        setError("Login succeeded but cookie was not set. Please check your browser cookie settings and try again.");
+        return;
+      }
       router.replace("/dashboard");
     } catch (err: any) {
       setError("Login failed");

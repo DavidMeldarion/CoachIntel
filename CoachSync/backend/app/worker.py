@@ -59,9 +59,35 @@ def sync_fireflies_meetings():
                     else:
                         meeting_date = raw_date
                     # Check if meeting already exists
-                    existing = await session.execute(select(Meeting).where(Meeting.id == m['id']))
-                    if existing.scalar_one_or_none():
+                    print(f"[SYNC DEBUG] User: {user.email}, Meeting ID: {m['id']}, Title: {m['title']}, Date: {meeting_date}, Source: {m['source']}")
+                    existing = await session.execute(select(Meeting).where(Meeting.id == m['id'] and Meeting.user_id == user.id))
+                    meeting_obj = existing.scalar_one_or_none()
+                    if meeting_obj:
+                        print(f"[SYNC DEBUG] Updating existing meeting {m['id']} for user {user.email}")
+                        meeting_obj.client_name = m['participants'][0]['name'] if m['participants'] else ''
+                        meeting_obj.title = m['title']
+                        meeting_obj.date = meeting_date
+                        meeting_obj.duration = m['duration']
+                        meeting_obj.source = m['source']
+                        meeting_obj.transcript_id = m['id']
+                        transcript_obj = await session.execute(select(Transcript).where(Transcript.id == m['id']))
+                        transcript_obj = transcript_obj.scalar_one_or_none()
+                        if transcript_obj:
+                            print(f"[SYNC DEBUG] Updating transcript for meeting {m['id']}")
+                            transcript_obj.summary = m['summary']
+                            transcript_obj.action_items = m['summary'].get('action_items', [])
+                        else:
+                            print(f"[SYNC DEBUG] Creating new transcript for meeting {m['id']}")
+                            transcript = Transcript(
+                                id=m['id'],
+                                meeting_id=m['id'],
+                                full_text='',
+                                summary=m['summary'],
+                                action_items=m['summary'].get('action_items', [])
+                            )
+                            session.add(transcript)
                         continue
+                    print(f"[SYNC DEBUG] Creating new meeting {m['id']} for user {user.email}")
                     meeting = Meeting(
                         id=m['id'],
                         user_id=user.id,

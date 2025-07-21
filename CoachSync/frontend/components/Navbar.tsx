@@ -1,55 +1,13 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState, useRef } from "react";
-
-interface User {
-  email: string;
-  first_name?: string;
-  last_name?: string;
-  name: string | null; // Keep for backward compatibility
-}
-
-interface SessionData {
-  loggedIn: boolean;
-  user?: User;
-}
-
-async function fetchSession(): Promise<SessionData> {
-  try {
-    const res = await fetch("/api/session");
-    if (!res.ok) return { loggedIn: false };
-    const data = await res.json();
-    return data;
-  } catch {
-    return { loggedIn: false };
-  }
-}
+import { useUser } from "../lib/userContext";
 
 export default function Navbar() {
-  const [sessionData, setSessionData] = useState<SessionData>({ loggedIn: false });
+  const { user, loading, refreshUser } = useUser();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {    async function checkLogin() {
-      const data = await fetchSession();
-      setSessionData(data);
-    }
-    checkLogin();
-    
-    // Listen for focus, storage, and navigation events
-    window.addEventListener('focus', checkLogin);
-    window.addEventListener('storage', checkLogin);
-    window.addEventListener('popstate', checkLogin);
-    
-    // Listen for cookie changes (logout sets cookie to expire)
-    const interval = setInterval(checkLogin, 1000);
-    
-    return () => {
-      window.removeEventListener('focus', checkLogin);
-      window.removeEventListener('storage', checkLogin);
-      window.removeEventListener('popstate', checkLogin);
-      clearInterval(interval);
-    };
-  }, []);
+  const loggedIn = !!user;
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -66,31 +24,54 @@ export default function Navbar() {
   }, []);
 
   const displayName = (() => {
-    if (sessionData.user?.first_name && sessionData.user?.last_name) {
-      return `${sessionData.user.first_name} ${sessionData.user.last_name}`;
+    if (user?.first_name && user?.last_name) {
+      return `${user.first_name} ${user.last_name}`;
     }
-    if (sessionData.user?.first_name) {
-      return sessionData.user.first_name;
+    if (user?.first_name) {
+      return user.first_name;
     }
-    if (sessionData.user?.name) {
-      return sessionData.user.name;
+    if (user?.name) {
+      return user.name;
     }
-    return sessionData.user?.email?.split('@')[0] || 'User';
+    return user?.email?.split('@')[0] || 'User';
   })();
+
+  // Handle logout: call refreshUser after navigation
+  const handleLogout = async () => {
+    setDropdownOpen(false);
+    try {
+      await fetch("/api/logout", { method: "POST", credentials: "include" });
+    } catch (err) {
+      console.error("Navbar: Logout failed", err);
+    }
+    await refreshUser();
+    window.location.href = "/login";
+  };
+
+  if (loading) {
+    return (
+      <nav className="w-full flex items-center justify-between px-8 py-4 bg-white shadow mb-8">
+        <div className="flex items-center gap-8">
+          <Link href="/dashboard" className="text-xl font-bold text-blue-700 tracking-tight hover:text-blue-900 transition">CoachSync</Link>
+        </div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-700"></div>
+      </nav>
+    );
+  }
 
   return (
     <nav className="w-full flex items-center justify-between px-8 py-4 bg-white shadow mb-8">
       <div className="flex items-center gap-8">
         <Link href="/dashboard" className="text-xl font-bold text-blue-700 tracking-tight hover:text-blue-900 transition">CoachSync</Link>
-        {sessionData.loggedIn && (
+        {loggedIn && (
           <>
             <Link href="/dashboard" className="text-gray-700 font-medium hover:text-blue-700 transition">Dashboard</Link>
-            <Link href="/timeline" className="text-gray-700 font-medium hover:text-blue-700 transition">Timeline</Link>
+            <Link href="/timeline" className="text-gray-700 font-medium hover:text-blue-700 transition">Meeting Timeline</Link>
           </>
         )}
       </div>
       
-      {sessionData.loggedIn ? (
+      {loggedIn ? (
         <div className="relative" ref={dropdownRef}>
           <button
             onClick={() => setDropdownOpen(!dropdownOpen)}
@@ -127,13 +108,12 @@ export default function Navbar() {
                 Upload Audio
               </Link>
               <hr className="my-1" />
-              <Link
-                href="/logout"
-                className="block px-4 py-2 text-sm text-red-600 hover:bg-gray-100 transition"
-                onClick={() => setDropdownOpen(false)}
+              <button
+                onClick={handleLogout}
+                className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100 transition"
               >
                 Logout
-              </Link>
+              </button>
             </div>
           )}
         </div>

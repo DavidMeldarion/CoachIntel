@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useUser } from "../../lib/userContext";
 
 interface UserProfile {
   email: string;
@@ -15,11 +16,13 @@ interface UserProfile {
 
 export default function Profile() {
   const router = useRouter();
+  const { user, loading: userLoading, refreshUser } = useUser();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [isEditing, setIsEditing] = useState(false);  const [formData, setFormData] = useState<UserProfile>({
+  const [isEditing, setIsEditing] = useState(false);
+  const [formData, setFormData] = useState<UserProfile>({
     email: "",
     first_name: "",
     last_name: "",
@@ -27,47 +30,24 @@ export default function Profile() {
     phone: "",
     address: "",
     fireflies_api_key: "",
-    zoom_jwt: ""
+    zoom_jwt: "",
   });
 
   useEffect(() => {
-    fetchProfile();
-  }, []);
-
-  async function fetchProfile() {
-    try {
-      const res = await fetch("/api/session");
-      if (!res.ok) {
-        router.push("/login");
-        return;
-      }
-      const sessionData = await res.json();
-      if (!sessionData.loggedIn) {
-        router.push("/login");
-        return;
-      }      // Fetch full profile from backend
-      const profileRes = await fetch(
-        process.env.NEXT_PUBLIC_BROWSER_API_URL + "/me",
-        { credentials: "include" }
-      );
-      if (profileRes.ok) {
-        const profileData = await profileRes.json();
-        setProfile(profileData);
-        setFormData(profileData);
-      } else {
-        setError("Failed to load profile");
-      }
-    } catch (err) {
-      setError("Failed to load profile");
-    } finally {
+    if (user) {
+      setProfile(user);
+      setFormData(user);
       setLoading(false);
+    } else {
+      router.push("/login");
     }
-  }
+  }, [user, router]);
 
   async function handleSave() {
     setError("");
     setSuccess("");
-    try {      const res = await fetch(
+    try {
+      const res = await fetch(
         process.env.NEXT_PUBLIC_BROWSER_API_URL + "/user",
         {
           method: "PUT",
@@ -84,6 +64,7 @@ export default function Profile() {
         setProfile(updatedProfile);
         setIsEditing(false);
         setSuccess("Profile updated successfully!");
+        await refreshUser(); // Refresh context after profile update
       } else {
         setError("Failed to update profile");
       }
@@ -92,22 +73,24 @@ export default function Profile() {
     }
   }
   function handleCancel() {
-    setFormData(profile || {
-      email: "",
-      first_name: "",
-      last_name: "",
-      name: "",
-      phone: "",
-      address: "",
-      fireflies_api_key: "",
-      zoom_jwt: ""
-    });
+    setFormData(
+      profile || {
+        email: "",
+        first_name: "",
+        last_name: "",
+        name: "",
+        phone: "",
+        address: "",
+        fireflies_api_key: "",
+        zoom_jwt: "",
+      }
+    );
     setIsEditing(false);
     setError("");
     setSuccess("");
   }
 
-  if (loading) {
+  if (userLoading) {
     return (
       <main className="flex items-center justify-center min-h-screen p-8 bg-gray-50">
         <div className="text-center">
@@ -157,18 +140,25 @@ export default function Profile() {
                 disabled
                 className="w-full border border-gray-300 rounded px-4 py-2 bg-gray-100 text-gray-500"
               />
-              <p className="text-xs text-gray-500 mt-1">Email cannot be changed</p>
-            </div>            <div>
+              <p className="text-xs text-gray-500 mt-1">
+                Email cannot be changed
+              </p>
+            </div>
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 First Name
               </label>
               <input
                 type="text"
                 value={formData.first_name}
-                onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, first_name: e.target.value })
+                }
                 disabled={!isEditing}
                 className={`w-full border border-gray-300 rounded px-4 py-2 ${
-                  isEditing ? "focus:outline-none focus:ring-2 focus:ring-blue-200" : "bg-gray-50"
+                  isEditing
+                    ? "focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    : "bg-gray-50"
                 }`}
                 required
               />
@@ -181,10 +171,14 @@ export default function Profile() {
               <input
                 type="text"
                 value={formData.last_name}
-                onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, last_name: e.target.value })
+                }
                 disabled={!isEditing}
                 className={`w-full border border-gray-300 rounded px-4 py-2 ${
-                  isEditing ? "focus:outline-none focus:ring-2 focus:ring-blue-200" : "bg-gray-50"
+                  isEditing
+                    ? "focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    : "bg-gray-50"
                 }`}
                 required
               />
@@ -197,10 +191,14 @@ export default function Profile() {
               <input
                 type="tel"
                 value={formData.phone || ""}
-                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, phone: e.target.value })
+                }
                 disabled={!isEditing}
                 className={`w-full border border-gray-300 rounded px-4 py-2 ${
-                  isEditing ? "focus:outline-none focus:ring-2 focus:ring-blue-200" : "bg-gray-50"
+                  isEditing
+                    ? "focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    : "bg-gray-50"
                 }`}
                 placeholder="Optional"
               />
@@ -212,19 +210,25 @@ export default function Profile() {
               </label>
               <textarea
                 value={formData.address || ""}
-                onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, address: e.target.value })
+                }
                 disabled={!isEditing}
                 rows={3}
                 className={`w-full border border-gray-300 rounded px-4 py-2 ${
-                  isEditing ? "focus:outline-none focus:ring-2 focus:ring-blue-200" : "bg-gray-50"
+                  isEditing
+                    ? "focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    : "bg-gray-50"
                 }`}
                 placeholder="Optional"
               />
             </div>
 
             <div className="border-t pt-6">
-              <h3 className="text-lg font-semibold text-gray-700 mb-4">API Integration</h3>
-              
+              <h3 className="text-lg font-semibold text-gray-700 mb-4">
+                API Integration
+              </h3>
+
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -233,10 +237,14 @@ export default function Profile() {
                   <input
                     type="password"
                     value={formData.fireflies_api_key || ""}
-                    onChange={(e) => setFormData({ ...formData, fireflies_api_key: e.target.value })}
+                    onChange={(e) =>
+                      setFormData({ ...formData, fireflies_api_key: e.target.value })
+                    }
                     disabled={!isEditing}
                     className={`w-full border border-gray-300 rounded px-4 py-2 ${
-                      isEditing ? "focus:outline-none focus:ring-2 focus:ring-blue-200" : "bg-gray-50"
+                      isEditing
+                        ? "focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        : "bg-gray-50"
                     }`}
                     placeholder="Optional - for meeting transcription"
                   />
@@ -249,10 +257,14 @@ export default function Profile() {
                   <input
                     type="password"
                     value={formData.zoom_jwt || ""}
-                    onChange={(e) => setFormData({ ...formData, zoom_jwt: e.target.value })}
+                    onChange={(e) =>
+                      setFormData({ ...formData, zoom_jwt: e.target.value })
+                    }
                     disabled={!isEditing}
                     className={`w-full border border-gray-300 rounded px-4 py-2 ${
-                      isEditing ? "focus:outline-none focus:ring-2 focus:ring-blue-200" : "bg-gray-50"
+                      isEditing
+                        ? "focus:outline-none focus:ring-2 focus:ring-blue-200"
+                        : "bg-gray-50"
                     }`}
                     placeholder="Optional - for Zoom integration"
                   />

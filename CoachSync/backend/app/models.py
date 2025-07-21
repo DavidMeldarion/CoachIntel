@@ -5,8 +5,13 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, relationship
 import os
 from sqlalchemy.dialects.postgresql import JSON
+from cryptography.fernet import Fernet
 
 Base = declarative_base()
+
+# Generate this key once and store securely (e.g., in .env)
+FERNET_KEY = os.getenv("FERNET_KEY", Fernet.generate_key().decode())
+fernet = Fernet(FERNET_KEY.encode())
 
 class User(Base):
     __tablename__ = "users"
@@ -18,6 +23,11 @@ class User(Base):
     zoom_jwt = Column(String, nullable=True)
     phone = Column(String, nullable=True)
     address = Column(String, nullable=True)
+    
+    # Encrypted Google OAuth fields
+    google_access_token_encrypted = Column(String, nullable=True)
+    google_refresh_token_encrypted = Column(String, nullable=True)
+    google_token_expiry = Column(DateTime, nullable=True)
     
     # Relationships
     meetings = relationship("Meeting", back_populates="user")
@@ -37,6 +47,22 @@ class User(Base):
         else:
             self.first_name = ""
             self.last_name = ""
+
+    def set_google_tokens(self, access_token, refresh_token, expiry):
+        self.google_access_token_encrypted = fernet.encrypt(access_token.encode()).decode()
+        self.google_refresh_token_encrypted = fernet.encrypt(refresh_token.encode()).decode()
+        self.google_token_expiry = expiry
+
+    def get_google_tokens(self):
+        try:
+            access = fernet.decrypt(self.google_access_token_encrypted.encode()).decode() if self.google_access_token_encrypted else None
+        except Exception:
+            access = None
+        try:
+            refresh = fernet.decrypt(self.google_refresh_token_encrypted.encode()).decode() if self.google_refresh_token_encrypted else None
+        except Exception:
+            refresh = None
+        return access, refresh, self.google_token_expiry
 
 class Meeting(Base):
     __tablename__ = "meetings"

@@ -1,9 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useUser } from "../../lib/userContext";
 
 export default function CompleteProfile() {
   const router = useRouter();
+  const { user, loading: userLoading } = useUser();
   const [form, setForm] = useState({
     email: "",
     firstName: "",
@@ -15,49 +17,40 @@ export default function CompleteProfile() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function checkSession() {
+    async function fetchProfile() {
       try {
-        const res = await fetch("/api/session");
-        if (!res.ok) {
+        // If user is not logged in, redirect to login
+        if (!user) {
           router.replace("/login");
           return;
         }
-        const sessionData = await res.json();
-        if (!sessionData.loggedIn) {
-          router.replace("/login");
+
+        // Use user context for profile info
+        setForm({
+          email: user.email,
+          firstName: user.first_name || "",
+          lastName: user.last_name || "",
+          firefliesKey: user.fireflies_api_key || "",
+          zoomJwt: user.zoom_jwt || "",
+        });
+
+        // If profile is complete (has both names), redirect to dashboard
+        if (user.first_name && user.last_name) {
+          router.replace("/dashboard");
           return;
-        }        // Fetch user profile from backend
-        const profileRes = await fetch(
-          process.env.NEXT_PUBLIC_BROWSER_API_URL + "/me",
-          { credentials: "include" }
-        );
-        
-        if (profileRes.ok) {
-          const profile = await profileRes.json();
-          setForm({
-            email: profile.email,
-            firstName: profile.first_name || "",
-            lastName: profile.last_name || "",
-            firefliesKey: profile.fireflies_api_key || "",
-            zoomJwt: profile.zoom_jwt || "",
-          });
-          
-          // If profile is complete (has both names), redirect to dashboard
-          if (profile.first_name && profile.last_name) {
-            router.replace("/dashboard");
-            return;
-          }
         }
-        
+
         setLoading(false);
       } catch (err) {
         setError("Failed to load profile");
         setLoading(false);
       }
     }
-    
-    checkSession();
-  }, [router]);
+
+    if (!userLoading) {
+      fetchProfile();
+    }
+  }, [router, user, userLoading]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -65,7 +58,7 @@ export default function CompleteProfile() {
       setError("First and last name are required.");
       return;
     }
-    
+
     try {
       const res = await fetch(
         process.env.NEXT_PUBLIC_BROWSER_API_URL + "/user",
@@ -94,7 +87,7 @@ export default function CompleteProfile() {
     }
   }
 
-  if (loading) {
+  if (loading || userLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-50">
         <div className="text-center">

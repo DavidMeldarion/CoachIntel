@@ -47,7 +47,7 @@ export async function middleware(request: NextRequest) {
       if (res.ok) {
         const profile = await res.json();
         // If missing first or last name, redirect to complete-profile
-        if (!profile.name || profile.name.trim().split(' ').length < 2) {
+        if (!profile.first_name || !profile.last_name) {
           const completeUrl = new URL('/profile/complete-profile', request.url);
           return NextResponse.redirect(completeUrl);
         }

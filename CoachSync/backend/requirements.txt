@@ -14,3 +14,4 @@ asyncpg
 PyJWT
 python-multipart
 requests
+cryptography
