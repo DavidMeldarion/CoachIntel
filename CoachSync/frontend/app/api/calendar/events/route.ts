@@ -17,5 +17,5 @@ export async function GET(request: NextRequest) {
     const text = await response.text();
     return NextResponse.json({ error: "Internal Server Error", detail: text }, { status: 500 });
   }
-  return NextResponse.json(data);
+  return NextResponse.json(data, { status: response.status });
 }

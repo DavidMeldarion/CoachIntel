@@ -3,11 +3,13 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useUser } from "../../lib/userContext";
+import { useSync } from "../../lib/syncContext";
 
 const API_BASE = process.env.NEXT_PUBLIC_BROWSER_API_URL || "http://localhost:8000";
 
 function Dashboard() {
   const { user, loading: userLoading } = useUser();
+  const { triggerSync } = useSync();
   const [upcomingMeetings, setUpcomingMeetings] = useState<any[]>([]);
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [meetingStats, setMeetingStats] = useState({ total: 0, week: 0, month: 0, byType: {} as Record<string, number> });
@@ -29,6 +31,15 @@ function Dashboard() {
         let calendarEvents: any[] = [];
         try {
           const calRes = await fetch("/api/calendar/events", { credentials: "include" });
+          console.log("Checking for status:", calRes.status)
+          if (calRes.status === 401) {
+            console.log("Logging out for 401")
+            await fetch('/api/logout', { method: 'POST' });
+            localStorage.clear();
+            sessionStorage.clear();
+            window.location.href = "/login";
+            return;
+          }
           if (calRes.ok) {
             const calData = await calRes.json();
             calendarEvents = calData.events || [];
@@ -99,6 +110,13 @@ function Dashboard() {
     setSyncError("");
     try {
       const res = await fetch("/api/calendar/events", { credentials: "include" });
+      if (res.status === 401) {
+        await fetch('/api/logout', { method: 'POST' });
+        localStorage.clear();
+        sessionStorage.clear();
+        window.location.href = "/login";
+        return;
+      }
       const data = await res.json();
       if (!res.ok) {
         // Show backend error detail if available
@@ -122,6 +140,7 @@ function Dashboard() {
         }));
         setUpcomingMeetings(upcoming.slice(0, 5));
       }
+      triggerSync(); // Notify global sync
     } catch (err: any) {
       setSyncError(err.message || "Sync failed");
       setShowReconnect(false);
@@ -130,31 +149,104 @@ function Dashboard() {
     }
   }
 
+  async function refetchMeetings() {
+    setLoading(true);
+    try {
+      const meetingsRes = await fetch("/api/meetings", { credentials: "include" });
+      const meetingsData = await meetingsRes.json();
+      const meetings = meetingsData.meetings || [];
+      // Recent activity: last 5 meetings (by date desc)
+      const recent = meetings
+        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .slice(0, 5)
+        .map((m: any) => ({
+          id: m.id,
+          type: "Meeting",
+          title: m.title,
+          date: m.date,
+          status: "Completed"
+        }));
+      setRecentActivity(recent);
+      // Meeting stats
+      const total = meetings.length;
+      const weekStart = new Date();
+      weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const week = meetings.filter((m: any) => new Date(m.date) >= weekStart).length;
+      const month = meetings.filter((m: any) => new Date(m.date) >= monthStart).length;
+      const byType: Record<string, number> = {};
+      meetings.forEach((m: any) => {
+        byType[m.source] = (byType[m.source] || 0) + 1;
+      });
+      setMeetingStats({ total, week, month, byType });
+    } catch (err) {
+      setRecentActivity([]);
+      setMeetingStats({ total: 0, week: 0, month: 0, byType: {} });
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleSyncMeetings() {
     setSyncing(true);
     setSyncError("");
     try {
-      let res = await fetch("/api/external-meetings?source=fireflies&limit=10", { credentials: "include" });
-      let data = await res.json();
-      console.log("[Dashboard DEBUG] /api/external-meetings response:", data);
+      // Start sync and get task_id
+      const res = await fetch("/api/external-meetings?source=fireflies&limit=10", { credentials: "include" });
+      const data = await res.json();
       if (data.error && data.error.includes("Fireflies API key not found")) {
-        res = await fetch("/api/external-meetings?source=zoom&limit=10", { credentials: "include" });
-        data = await res.json();
-        console.log("[Dashboard DEBUG] /api/external-meetings (zoom) response:", data);
+        setSyncError("Fireflies API key not found");
+        setSyncing(false);
+        return;
       }
-      if (data.meetings && Array.isArray(data.meetings)) {
-        setRecentActivity(data.meetings.slice(0, 5));
-        if (data.meetings.length === 0) {
-          setSyncError("No meetings found. Try syncing again or check your Fireflies account.");
+      if (!data.task_id) {
+        setSyncError("No sync task started. Raw response: " + JSON.stringify(data));
+        setSyncing(false);
+        return;
+      }
+      // Poll for sync completion
+      let status = "PENDING";
+      let pollCount = 0;
+      while (status !== "SUCCESS" && status !== "FAILURE" && pollCount < 30) {
+        await new Promise(r => setTimeout(r, 2000)); // 2s delay
+        const statusRes = await fetch(`/api/sync/status/${data.task_id}`);
+        const statusData = await statusRes.json();
+        status = statusData.status;
+        pollCount++;
+        if (status === "FAILURE") {
+          setSyncError("Sync failed. Please try again.");
+          setSyncing(false);
+          return;
         }
-      } else {
-        setSyncError("No meetings array in response. Raw response: " + JSON.stringify(data));
       }
+      if (status !== "SUCCESS") {
+        setSyncError("Sync timed out. Please try again.");
+        setSyncing(false);
+        return;
+      }
+      // Now fetch meetings
+      await refetchMeetings();
+      triggerSync(); // Notify global sync
     } catch (err) {
       setSyncError("Sync failed: " + (err?.message || err));
     } finally {
       setSyncing(false);
     }
+  }
+
+  function formatDate(dateStr: string) {
+    if (!dateStr) return "";
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr;
+    return date.toLocaleString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true
+    });
   }
 
   return (
@@ -204,9 +296,9 @@ function Dashboard() {
             <ul className="divide-y">
               {upcomingMeetings.map(m => (
                 <li key={m.id} className="py-2 flex justify-between items-center">
-                  <span className="font-medium text-gray-800">{m.title}</span>
-                  <span className="text-gray-500 text-sm">{m.date}</span>
-                  <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs ml-2">{m.source}</span>
+                  <span className="font-medium text-gray-800 flex-1">{m.title}</span>
+                  <span className="text-gray-500 text-sm flex-1 text-center">{formatDate(m.date)}</span>
+                  <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs ml-2 text-center">{m.source}</span>
                 </li>
               ))}
             </ul>
@@ -224,7 +316,7 @@ function Dashboard() {
               {recentActivity.map(a => (
                 <li key={a.id} className="py-2 flex items-center justify-between">
                   <span className="font-medium text-gray-800 flex-1">{a.title}</span>
-                  <span className="text-gray-500 text-sm flex-1 text-center">{a.date}</span>
+                  <span className="text-gray-500 text-sm flex-1 text-center">{formatDate(a.date)}</span>
                   <span className={`px-2 py-1 rounded text-xs ml-2 text-center ${a.status === 'Completed' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`} style={{ display: 'inline-block', minWidth: '80px' }}>{a.status}</span>
                 </li>
               ))}

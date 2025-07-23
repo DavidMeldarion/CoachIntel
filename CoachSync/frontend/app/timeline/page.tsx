@@ -2,8 +2,10 @@
 
 import { fetchSessions } from "../../lib/api";
 import { useEffect, useState } from "react";
+import { useSync } from "../../lib/syncContext";
 
 export default function MeetingTimeline() {
+  const { lastSync } = useSync();
   const [meetings, setMeetings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -15,7 +17,8 @@ export default function MeetingTimeline() {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/meetings", { credentials: "include" });
+      // Add cache-busting param to always get fresh data
+      const response = await fetch(`/api/meetings?ts=${Date.now()}`, { credentials: "include" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       setMeetings(data.meetings || []);
@@ -33,22 +36,58 @@ export default function MeetingTimeline() {
     return () => clearInterval(interval);
   }, []);
 
-  // Get unique client names and meeting types from meetings
-  const clientNames = Array.from(new Set(meetings.map((m) => m.client_name).filter(Boolean)));
-  const meetingTypes = Array.from(new Set(meetings.map((m) => m.source).filter(Boolean)));
+  // Refetch meetings when lastSync changes
+  useEffect(() => {
+    fetchStoredMeetings();
+  }, [lastSync]);
+
+  // Sort meetings by date descending (most recent first)
+  const sortedMeetings = [...meetings].sort((a, b) => {
+    const dateA = new Date(a.date).getTime();
+    const dateB = new Date(b.date).getTime();
+    return dateB - dateA;
+  });
+
+  // Get unique client names and meeting types from sorted meetings
+  const clientNames = Array.from(new Set(sortedMeetings.map((m) => m.client_name).filter(Boolean)));
+  const meetingTypes = Array.from(new Set(sortedMeetings.map((m) => m.source).filter(Boolean)));
 
   // Filter meetings by selected client and type
-  const filteredMeetings = meetings.filter((m) => {
+  const filteredMeetings = sortedMeetings.filter((m) => {
     const clientMatch = selectedClient ? m.client_name === selectedClient : true;
     const typeMatch = selectedType ? m.source === selectedType : true;
     return clientMatch && typeMatch;
   });
 
+  // Helper to format date in a user-friendly way
+  function formatDate(dateStr: string) {
+    if (!dateStr) return "";
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr;
+    return date.toLocaleString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true
+    });
+  }
+
   return (
     <main className="flex flex-col items-center justify-center min-h-screen p-8 bg-gray-50">
       <h2 className="text-2xl font-bold mb-6 text-blue-700">Meeting Timeline</h2>
       <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-4xl border border-gray-100">
-        <h3 className="text-lg font-semibold mb-4">Your Meetings</h3>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-semibold">Your Meetings</h3>
+          <button
+            className="px-3 py-1 rounded bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700"
+            onClick={fetchStoredMeetings}
+            disabled={loading}
+          >
+            {loading ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
         {/* Filters */}
         <div className="mb-4 flex flex-wrap gap-4 items-center">
           {clientNames.length > 1 && (
@@ -95,7 +134,7 @@ export default function MeetingTimeline() {
                 <div key={meeting.id} className="border border-gray-200 rounded-lg p-4">
                   <div className="flex justify-between items-start mb-2">
                     <h4 className="font-semibold text-lg">{meeting.title}</h4>
-                    <span className="text-sm text-gray-500">{meeting.date}</span>
+                    <span className="text-sm text-gray-500">{formatDate(meeting.date)}</span>
                   </div>
                   <div className="text-sm text-gray-600 mb-2">
                     Duration: {Math.floor(meeting.duration / 60)}m {meeting.duration % 60}s

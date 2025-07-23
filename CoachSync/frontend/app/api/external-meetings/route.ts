@@ -29,12 +29,9 @@ export async function GET(request: NextRequest) {
       credentials: "include",
     });
 
-    if (!response.ok) {
-      throw new Error(`Backend API error: ${response.status}`);
-    }
-
+    // Forward the full backend response (may include task_id for polling)
     const data = await response.json();
-    return NextResponse.json(data);
+    return NextResponse.json(data, { status: response.status });
   } catch (error) {
     console.error("Error fetching external meetings:", error);
     return NextResponse.json(

@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 from datetime import datetime, timedelta
 from sqlalchemy.orm import selectinload
 import logging
+from celery.result import AsyncResult
 
 from .integrations import fetch_fireflies_meetings, fetch_zoom_meetings, get_fireflies_meeting_details
 from .models import User, create_or_update_user, get_user_by_email, Meeting, Transcript, AsyncSessionLocal
@@ -90,12 +91,9 @@ async def get_external_meetings(
     limit: int = Query(10, description="Maximum number of meetings to fetch")
 ):
     """
-    Fetch external meetings from Fireflies.ai or Zoom for the authenticated user.
-    
-    Query Parameters:
-    - source: "fireflies" or "zoom"
-    - limit: maximum number of meetings to return (default 10)
-    """    # Extract JWT token from cookie to get the user
+    Trigger background sync of Fireflies.ai or Zoom meetings for the authenticated user,
+    then return meetings from the database (not direct API call).
+    """
     cookie_header = request.headers.get("cookie", "")
     token = None
     for cookie in cookie_header.split(";"):
@@ -106,12 +104,9 @@ async def get_external_meetings(
         elif cookie.startswith("user="):
             token = cookie.split("user=")[1]
             break
-    
     if not token:
         raise HTTPException(status_code=401, detail="No authentication token")
-    
     try:
-        # Decode JWT token
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_email = payload.get("sub")
         if not user_email:
@@ -119,27 +114,54 @@ async def get_external_meetings(
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")    
+        raise HTTPException(status_code=401, detail="Invalid token")
     logging.info(f"[API DEBUG] Sync requested for user: {user_email}, source: {source}, limit: {limit}")
+    # Trigger background sync (Celery)
     if source == "fireflies":
         user_profile = await get_user_by_email(user_email)
         if not user_profile or not user_profile.fireflies_api_key:
             logging.warning(f"[API DEBUG] No Fireflies API key for user: {user_email}")
             return {"error": "Fireflies API key not found"}
-        meetings_data = await fetch_fireflies_meetings(user_email, user_profile.fireflies_api_key, limit=limit)
-        logging.info(f"[API DEBUG] Fireflies meetings fetched: {len(meetings_data.get('meetings', []))}")
-        return meetings_data
+        sync_fireflies_meetings.delay(user_email, user_profile.fireflies_api_key)
     elif source == "zoom":
         user_profile = await get_user_by_email(user_email)
         if not user_profile or not user_profile.zoom_jwt:
             logging.warning(f"[API DEBUG] No Zoom JWT for user: {user_email}")
             return {"error": "Zoom JWT not found"}
-        meetings_data = await fetch_zoom_meetings(user_email, user_profile.zoom_jwt)
-        logging.info(f"[API DEBUG] Zoom meetings fetched: {len(meetings_data.get('meetings', []))}")
-        return meetings_data
+        # You can add sync_zoom_meetings.delay(...) here if implemented
     else:
         logging.error(f"[API DEBUG] Invalid source: {source}")
         return {"error": "Invalid source. Must be 'fireflies' or 'zoom'", "meetings": [], "total_count": 0}
+    # Query meetings from DB for this user
+    async with AsyncSessionLocal() as session:
+        user = await get_user_by_email(user_email)
+        if not user:
+            return {"meetings": []}
+        result = await session.execute(
+            select(Meeting).options(selectinload(Meeting.transcript)).where(Meeting.user_id == user.id)
+        )
+        meetings = result.scalars().all()
+        meeting_list = []
+        for m in meetings:
+            transcript = None
+            if m.transcript:
+                transcript = {
+                    "full_text": m.transcript.full_text,
+                    "summary": m.transcript.summary,
+                    "action_items": m.transcript.action_items,
+                }
+            # Always send ISO 8601 string with Z (UTC) if datetime is not None
+            date_str = m.date.isoformat() + 'Z' if m.date and m.date.tzinfo is None else m.date.isoformat() if m.date else None
+            meeting_list.append({
+                "id": m.id,
+                "client_name": m.client_name,
+                "title": m.title,
+                "date": date_str,
+                "duration": m.duration,
+                "source": m.source,
+                "transcript": transcript
+            })
+        return {"meetings": meeting_list}
 
 @app.get("/external-meetings/{source}/{meeting_id}")
 async def get_meeting_details(
@@ -337,15 +359,15 @@ async def get_calendar_events(request: Request):
                 token = cookie.split("user=")[1].strip()
                 break
         if not token:
-            return {"error": "No authentication token"}
+            raise HTTPException(status_code=401, detail="No authentication token")
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         email = payload.get("sub")
         user = await get_user_by_email(email)
         if not user:
-            return {"error": "User not found"}
+           raise HTTPException(status_code=401, detail="User not found")
         access_token, refresh_token, expiry = user.get_google_tokens()
         if not access_token:
-            return {"error": "No Google Calendar token"}
+            raise HTTPException(status_code=401, detail="No Google Calendar token")
         # Refresh token if expired
         if expiry and expiry < datetime.utcnow():
             data = {
@@ -357,7 +379,7 @@ async def get_calendar_events(request: Request):
             async with httpx.AsyncClient() as client:
                 resp = await client.post(GOOGLE_TOKEN_URL, data=data)
                 if resp.status_code != 200:
-                    return {"error": "Failed to refresh Google token", "detail": resp.text}
+                    raise HTTPException(status_code=401, detail=f"Failed to refresh Google token: {resp.text}")
                 tokens = resp.json()
             access_token = tokens["access_token"]
             expires_in = tokens.get("expires_in", 3600)
@@ -372,14 +394,16 @@ async def get_calendar_events(request: Request):
         async with httpx.AsyncClient() as client:
             resp = await client.get(GOOGLE_CALENDAR_EVENTS_URL, headers=headers, params=params)
             if resp.status_code == 403:
-                return {"error": "Google API returned 403 Forbidden", "detail": resp.text}
+                raise HTTPException(status_code=403, detail=f"Google API returned 403 Forbidden: {resp.text}")
             resp.raise_for_status()
             events = resp.json().get("items", [])
         return {"events": events}
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return {"error": "Internal Server Error", "detail": str(e)}
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/me")  # Temporarily remove response_model
 async def get_current_user(request: Request):
@@ -509,11 +533,13 @@ async def get_user_meetings(request: Request):
                     "summary": m.transcript.summary,
                     "action_items": m.transcript.action_items,
                 }
+            # Always send ISO 8601 string with Z (UTC) if datetime is not None
+            date_str = m.date.isoformat() + 'Z' if m.date and m.date.tzinfo is None else m.date.isoformat() if m.date else None
             meeting_list.append({
                 "id": m.id,
                 "client_name": m.client_name,
                 "title": m.title,
-                "date": m.date,
+                "date": date_str,
                 "duration": m.duration,
                 "source": m.source,
                 "transcript": transcript
@@ -568,3 +594,12 @@ async def sync_external_meetings(request: Request, source: str = Query(..., desc
     else:
         logging.error(f"[SYNC DEBUG] Invalid source: {source}")
         return {"error": "Invalid source. Must be 'fireflies' or 'zoom'"}
+
+@app.get("/sync/status/{task_id}")
+def get_sync_status(task_id: str):
+    """
+    Return the status of a Celery sync task by task_id.
+    Possible states: PENDING, STARTED, SUCCESS, FAILURE, etc.
+    """
+    result = AsyncResult(task_id)
+    return {"task_id": task_id, "status": result.status, "ready": result.ready(), "successful": result.successful()}

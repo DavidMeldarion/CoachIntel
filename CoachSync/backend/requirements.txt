@@ -8,10 +8,10 @@ sqlalchemy[asyncio]
 alembic
 boto3
 httpx
-httpx
 psycopg2-binary
 asyncpg
 PyJWT
 python-multipart
 requests
 cryptography
+asgiref

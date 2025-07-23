@@ -1,12 +1,11 @@
-# Dummy Celery worker for CoachSync
 from celery import Celery
 import os
-from app.models import User, Meeting, Transcript
+from app.models import User, Meeting, Transcript, AsyncSessionLocal
 from app.integrations import fetch_fireflies_meetings
-from app.main import AsyncSessionLocal
 import asyncio
 from sqlalchemy import select
 import datetime
+from asgiref.sync import async_to_sync
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = os.getenv("REDIS_PORT", "6379")
@@ -36,11 +35,17 @@ def summarize_transcript_task(transcript):
     return f"Summary: {transcript[:30]}..."
 
 @celery_app.task
-def sync_fireflies_meetings():
+def sync_fireflies_meetings(user_email=None, api_key=None):
     async def run():
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(User).where(User.fireflies_api_key.isnot(None)))
-            users = result.scalars().all()
+            if user_email and api_key:
+                # Sync for specific user
+                result = await session.execute(select(User).where(User.email == user_email, User.fireflies_api_key == api_key))
+                users = result.scalars().all()
+            else:
+                # Sync for all users with Fireflies API key
+                result = await session.execute(select(User).where(User.fireflies_api_key.isnot(None)))
+                users = result.scalars().all()
             for user in users:
                 meetings_data = await fetch_fireflies_meetings(user.email, user.fireflies_api_key, limit=50)
                 for m in meetings_data.get('meetings', []):
@@ -60,7 +65,7 @@ def sync_fireflies_meetings():
                         meeting_date = raw_date
                     # Check if meeting already exists
                     print(f"[SYNC DEBUG] User: {user.email}, Meeting ID: {m['id']}, Title: {m['title']}, Date: {meeting_date}, Source: {m['source']}")
-                    existing = await session.execute(select(Meeting).where(Meeting.id == m['id'] and Meeting.user_id == user.id))
+                    existing = await session.execute(select(Meeting).where(Meeting.id == m['id'], Meeting.user_id == user.id))
                     meeting_obj = existing.scalar_one_or_none()
                     if meeting_obj:
                         print(f"[SYNC DEBUG] Updating existing meeting {m['id']} for user {user.email}")
@@ -108,4 +113,4 @@ def sync_fireflies_meetings():
                     )
                     session.add(transcript)
             await session.commit()
-    asyncio.run(run())
+    async_to_sync(run)()
