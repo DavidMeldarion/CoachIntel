@@ -1,0 +1,22 @@
+import { NextRequest, NextResponse } from "next/server";
+
+export async function GET(request: NextRequest) {
+  // Extract task_id from the URL
+  const task_id = request.nextUrl.pathname.split("/").pop();
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://backend:8000";
+  const backendUrl = `${API_BASE}/sync/status/${task_id}`;
+  const response = await fetch(backendUrl, {
+    credentials: "include"
+  });
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    // If not JSON, return a generic error
+    return NextResponse.json(
+      { error: "Backend returned non-JSON response", status: response.status },
+      { status: response.status }
+    );
+  }
+  return NextResponse.json(data, { status: response.status });
+}

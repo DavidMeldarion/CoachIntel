@@ -28,8 +28,13 @@ export async function GET(request: Request) {
             email: userData.email,
             first_name: userData.first_name,
             last_name: userData.last_name,
-            name: userData.name // Keep for backward compatibility
-          }        });
+            name: userData.name, // Keep for backward compatibility
+            fireflies_api_key: userData.fireflies_api_key,
+            zoom_jwt: userData.zoom_jwt,
+            phone: userData.phone,
+            address: userData.address,
+          }
+        });
       } else {
         console.error('Backend response not ok:', backendResponse.status, backendResponse.statusText);
       }

@@ -127,6 +127,94 @@ async def fetch_fireflies_meetings(user_email: str, api_key: str = None, limit: 
             "details": str(e)
         }
 
+def fetch_fireflies_meetings_sync(user_email: str, api_key: str = None, limit: int = 10) -> Dict[str, Any]:
+    import requests
+    if not api_key:
+        api_key = FIREFLIES_API_KEY
+    if not api_key:
+        return {"error": "Fireflies API key not provided"}
+    query = """
+    query GetTranscripts($limit: Int!, $hostEmail: String) {
+        transcripts(limit: $limit, host_email: $hostEmail) {
+            id
+            title
+            date
+            duration
+            meeting_link
+            summary {
+                keywords
+                action_items
+                outline
+                shorthand_bullet
+                overview
+            }
+            participants
+        }
+    }
+    """
+    variables = {
+        "limit": limit,
+        "hostEmail": user_email
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    payload = {
+        "query": query,
+        "variables": variables
+    }
+    try:
+        response = requests.post(
+            FIREFLIES_API_URL,
+            headers=headers,
+            json=payload,
+            timeout=30
+        )
+        response.raise_for_status()
+        result = response.json()
+        if "errors" in result:
+            return {
+                "error": "Fireflies API error",
+                "details": result["errors"]
+            }
+        transcripts = result.get("data", {}).get("transcripts", [])
+        meetings = []
+        for transcript in transcripts:
+            summary = transcript.get("summary") or {}
+            meeting = {
+                "id": transcript.get("id"),
+                "title": transcript.get("title", "Untitled Meeting"),
+                "date": transcript.get("date"),
+                "duration": transcript.get("duration"),
+                "meeting_url": transcript.get("meeting_link"),
+                "participants": [
+                    {"name": name, "email": ""}
+                    for name in transcript.get("participants", [])
+                ],
+                "summary": {
+                    "keywords": summary.get("keywords") if isinstance(summary.get("keywords"), list) else [],
+                    "action_items": summary.get("action_items") if isinstance(summary.get("action_items"), list) else [],
+                    "outline": summary.get("outline", ""),
+                    "overview": summary.get("overview", ""),
+                    "key_points": summary.get("shorthand_bullet") if isinstance(summary.get("shorthand_bullet"), list) else []
+                },
+                "transcript_available": True,
+                "source": "fireflies"
+            }
+            meetings.append(meeting)
+        return {
+            "meetings": meetings,
+            "total_count": len(meetings),
+            "source": "fireflies"
+        }
+    except requests.Timeout:
+        return {"error": "Request timeout - Fireflies API took too long to respond"}
+    except requests.RequestException as e:
+        return {"error": f"HTTP error {getattr(e.response, 'status_code', 'unknown')}", "details": str(e)}
+    except Exception as e:
+        return {"error": "Unexpected error occurred", "details": str(e)}
+
 async def get_fireflies_meeting_details(transcript_id: str, api_key: str = None) -> Dict[str, Any]:
     """
     Get detailed information for a specific Fireflies meeting/transcript.

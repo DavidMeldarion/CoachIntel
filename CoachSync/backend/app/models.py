@@ -99,6 +99,9 @@ AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=F
 SYNC_DATABASE_URL = os.getenv("SYNC_DATABASE_URL") or os.getenv("DATABASE_URL")
 sync_engine = create_engine(SYNC_DATABASE_URL)
 
+# Synchronous session for Celery worker and scripts
+SessionLocal = sessionmaker(sync_engine)
+
 async def get_user_by_email(email: str):
     async with AsyncSessionLocal() as session:
         result = await session.execute(

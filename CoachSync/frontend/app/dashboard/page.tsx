@@ -193,7 +193,12 @@ function Dashboard() {
     setSyncError("");
     try {
       // Start sync and get task_id
-      const res = await fetch("/api/external-meetings?source=fireflies&limit=10", { credentials: "include" });
+      const res = await fetch("/api/external-meetings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ source: "fireflies" })
+      });
       const data = await res.json();
       if (data.error && data.error.includes("Fireflies API key not found")) {
         setSyncError("Fireflies API key not found");
