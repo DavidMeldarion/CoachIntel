@@ -1,11 +1,19 @@
 import type { NextRequest } from "next/server";
 
 export async function GET(req: NextRequest) {
-  const key = req.nextUrl.searchParams.get("key");
-  if (!key) return new Response("Missing key", { status: 400 });
-  // Proxy to backend
+  // Proxy to backend, using session cookie for authentication
   const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-  const url = `${backendUrl}/external-meetings/?source=fireflies&user=test@demo.com`;
-  const res = await fetch(url, { headers: { "x-api-key": key } });
-  return new Response(null, { status: res.ok ? 200 : 400 });
+  const url = `${backendUrl}/test-fireflies`;
+  // Forward cookies for session
+  const cookie = req.headers.get("cookie") || "";
+  const res = await fetch(url, {
+    method: "GET",
+    headers: { "cookie": cookie },
+    credentials: "include",
+  });
+  if (res.ok) {
+    return new Response(null, { status: 200 });
+  } else {
+    return new Response(await res.text(), { status: 400 });
+  }
 }

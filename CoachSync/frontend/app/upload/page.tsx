@@ -7,24 +7,37 @@ export default function Upload() {
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<string>("");
   const [isUploading, setIsUploading] = useState(false);
+  const [error, setError] = useState("");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!file) {
-      setStatus("Please select an audio file.");
+      setError("Please select an audio file.");
       return;
     }
     setIsUploading(true);
     setStatus("");
+    setError("");
     try {
       const res = await uploadAudio(file);
       setStatus(`Uploaded: ${res.filename}`);
       setFile(null);
     } catch (err) {
-      setStatus("Upload failed. Please try again.");
+      setError("Upload failed. Please try again.");
     } finally {
       setIsUploading(false);
     }
+  }
+
+  if (isUploading) {
+    return (
+      <main className="flex flex-col items-center justify-center min-h-screen p-8 bg-gray-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-700 mx-auto mb-4"></div>
+          <p className="text-gray-600">Uploading...</p>
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -48,7 +61,8 @@ export default function Upload() {
           >
             {isUploading ? "Uploading..." : "Upload"}
           </button>
-          {status && <div className={`mt-2 text-sm text-center ${status.includes('failed') ? 'text-red-600' : 'text-green-700'}`}>{status}</div>}
+          {error && <div className="mt-2 text-sm text-center text-red-600">{error}</div>}
+          {status && !error && <div className="mt-2 text-sm text-center text-green-700">{status}</div>}
         </form>
         <div className="text-gray-500 text-center text-sm mt-2">Supported formats: .mp3, .m4a. Max size 100MB.</div>
       </div>

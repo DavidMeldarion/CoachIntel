@@ -7,6 +7,7 @@ import Link from "next/link";
 export default function Signup() {
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const router = useRouter();
 
   async function handleSubmit(e: React.FormEvent) {
@@ -16,11 +17,14 @@ export default function Signup() {
       setError("Email is required.");
       return;
     }
-    try {      // Check if user already exists
+    setLoading(true);
+    try {
+      // Check if user already exists
       const res = await fetch(`${process.env.NEXT_PUBLIC_BROWSER_API_URL || 'http://localhost:8000'}/user/${encodeURIComponent(email)}`);
       if (res.ok) {
         setError("Account already exists. Please log in.");
         setTimeout(() => router.push("/login"), 1500);
+        setLoading(false);
         return;
       }
     } catch {}
@@ -30,7 +34,20 @@ export default function Signup() {
       router.push("/profile/complete-profile");
     } catch {
       setError("Signup failed. Try again.");
+    } finally {
+      setLoading(false);
     }
+  }
+
+  if (loading) {
+    return (
+      <main className="flex flex-col items-center justify-center min-h-screen p-8 bg-gray-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-700 mx-auto mb-4"></div>
+          <p className="text-gray-600">Signing up...</p>
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -47,7 +64,8 @@ export default function Signup() {
           required
         />
         {error && <div className="text-red-500 text-sm text-center">{error}</div>}
-        <button type="submit" className="w-full bg-blue-600 text-white font-semibold rounded py-2 hover:bg-blue-700 transition">Continue</button>        <button
+        <button type="submit" className="w-full bg-blue-600 text-white font-semibold rounded py-2 hover:bg-blue-700 transition">Continue</button>
+        <button
           type="button"
           className="flex items-center justify-center gap-2 border border-gray-300 bg-white text-gray-700 font-medium rounded py-2 w-full hover:bg-gray-100 transition"
           onClick={() => window.location.href = (process.env.NEXT_PUBLIC_BROWSER_API_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000") + "/auth/google?intent=signup"}

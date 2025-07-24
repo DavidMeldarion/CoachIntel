@@ -2,14 +2,20 @@
 import os
 import httpx
 import json
+import time
+import logging
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
+from httpx import TimeoutException, HTTPStatusError
 
 FIREFLIES_API_KEY = os.getenv("FIREFLIES_API_KEY")
 ZOOM_JWT = os.getenv("ZOOM_JWT")
 FIREFLIES_API_URL = "https://api.fireflies.ai/graphql"
 
-async def fetch_fireflies_meetings(user_email: str, api_key: str = None, limit: int = 10) -> Dict[str, Any]:
+logger = logging.getLogger("coachsync")
+logger.setLevel(logging.INFO)
+
+async def fetch_fireflies_meetings(user_email: str, api_key: str = None, limit: int = 10, max_retries: int = 3) -> Dict[str, Any]:
     """
     Fetch meetings from Fireflies.ai for a given user using GraphQL API.
     
@@ -61,73 +67,68 @@ async def fetch_fireflies_meetings(user_email: str, api_key: str = None, limit: 
         "variables": variables
     }
     
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                FIREFLIES_API_URL, 
-                headers=headers, 
-                json=payload
-            )
-            response.raise_for_status()
-            
-            result = response.json()
-            
-            # Check for GraphQL errors
-            if "errors" in result:
+    attempt = 0
+    while attempt < max_retries:
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    FIREFLIES_API_URL, 
+                    headers=headers, 
+                    json=payload
+                )
+                response.raise_for_status()
+                
+                result = response.json()
+                
+                # Check for GraphQL errors
+                if "errors" in result:
+                    logger.error(f"Fireflies API error: {result['errors']}")
+                    return {"error": "Fireflies API error", "details": result["errors"]}
+                
+                transcripts = result.get("data", {}).get("transcripts", [])
+                
+                meetings = []
+                for transcript in transcripts:
+                    summary = transcript.get("summary") or {}
+                    # Convert Fireflies transcript to our meeting format
+                    meeting = {
+                        "id": transcript.get("id"),
+                        "title": transcript.get("title", "Untitled Meeting"),
+                        "date": transcript.get("date"),
+                        "duration": transcript.get("duration"),
+                        "meeting_url": transcript.get("meeting_link"),
+                        "participants": [
+                            {"name": name, "email": ""} 
+                            for name in transcript.get("participants", [])
+                        ],
+                        "summary": {
+                            "keywords": summary.get("keywords") if isinstance(summary.get("keywords"), list) else [],
+                            "action_items": summary.get("action_items") if isinstance(summary.get("action_items"), list) else [],
+                            "outline": summary.get("outline", ""),
+                            "overview": summary.get("overview", ""),
+                            "key_points": summary.get("shorthand_bullet") if isinstance(summary.get("shorthand_bullet"), list) else []
+                        },
+                        "transcript_available": True,  # Assume transcripts are available for all meetings
+                        "source": "fireflies"
+                    }
+                    meetings.append(meeting)
+                
                 return {
-                    "error": "Fireflies API error",
-                    "details": result["errors"]
-                }
-              # Transform the data for easier consumption
-            transcripts = result.get("data", {}).get("transcripts", [])
-            
-            meetings = []
-            for transcript in transcripts:
-                summary = transcript.get("summary") or {}
-                # Convert Fireflies transcript to our meeting format
-                meeting = {
-                    "id": transcript.get("id"),
-                    "title": transcript.get("title", "Untitled Meeting"),
-                    "date": transcript.get("date"),
-                    "duration": transcript.get("duration"),
-                    "meeting_url": transcript.get("meeting_link"),
-                    "participants": [
-                        {"name": name, "email": ""} 
-                        for name in transcript.get("participants", [])
-                    ],
-                    "summary": {
-                        "keywords": summary.get("keywords") if isinstance(summary.get("keywords"), list) else [],
-                        "action_items": summary.get("action_items") if isinstance(summary.get("action_items"), list) else [],
-                        "outline": summary.get("outline", ""),
-                        "overview": summary.get("overview", ""),
-                        "key_points": summary.get("shorthand_bullet") if isinstance(summary.get("shorthand_bullet"), list) else []
-                    },                    "transcript_available": True,  # Assume transcripts are available for all meetings
+                    "meetings": meetings,
+                    "total_count": len(meetings),
                     "source": "fireflies"
                 }
-                meetings.append(meeting)
-            
-            return {
-                "meetings": meetings,
-                "total_count": len(meetings),
-                "source": "fireflies"
-            }
-            
-    except httpx.TimeoutException:
-        return {"error": "Request timeout - Fireflies API took too long to respond"}
-    except httpx.HTTPStatusError as e:
-        return {
-            "error": f"HTTP error {e.response.status_code}",
-            "details": f"Fireflies API returned: {e.response.text}"
-        }
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {
-            "error": "Unexpected error occurred",
-            "details": str(e)
-        }
+                
+        except (TimeoutException, HTTPStatusError) as e:
+            logger.warning(f"Fireflies API attempt {attempt+1} failed: {str(e)}")
+            time.sleep(2 ** attempt)
+            attempt += 1
+        except Exception as e:
+            logger.error(f"Unexpected error in Fireflies API: {str(e)}")
+            return {"error": "Unexpected error occurred", "details": str(e)}
+    return {"error": "Fireflies API failed after retries"}
 
-def fetch_fireflies_meetings_sync(user_email: str, api_key: str = None, limit: int = 10) -> Dict[str, Any]:
+def fetch_fireflies_meetings_sync(user_email: str, api_key: str = None, limit: int = 10, max_retries: int = 3) -> Dict[str, Any]:
     import requests
     if not api_key:
         api_key = FIREFLIES_API_KEY
@@ -164,56 +165,58 @@ def fetch_fireflies_meetings_sync(user_email: str, api_key: str = None, limit: i
         "query": query,
         "variables": variables
     }
-    try:
-        response = requests.post(
-            FIREFLIES_API_URL,
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
-        response.raise_for_status()
-        result = response.json()
-        if "errors" in result:
+    attempt = 0
+    while attempt < max_retries:
+        try:
+            response = requests.post(
+                FIREFLIES_API_URL,
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
+            response.raise_for_status()
+            result = response.json()
+            if "errors" in result:
+                logger.error(f"Fireflies API error: {result['errors']}")
+                return {"error": "Fireflies API error", "details": result["errors"]}
+            transcripts = result.get("data", {}).get("transcripts", [])
+            meetings = []
+            for transcript in transcripts:
+                summary = transcript.get("summary") or {}
+                meeting = {
+                    "id": transcript.get("id"),
+                    "title": transcript.get("title", "Untitled Meeting"),
+                    "date": transcript.get("date"),
+                    "duration": transcript.get("duration"),
+                    "meeting_url": transcript.get("meeting_link"),
+                    "participants": [
+                        {"name": name, "email": ""}
+                        for name in transcript.get("participants", [])
+                    ],
+                    "summary": {
+                        "keywords": summary.get("keywords") if isinstance(summary.get("keywords"), list) else [],
+                        "action_items": summary.get("action_items") if isinstance(summary.get("action_items"), list) else [],
+                        "outline": summary.get("outline", ""),
+                        "overview": summary.get("overview", ""),
+                        "key_points": summary.get("shorthand_bullet") if isinstance(summary.get("shorthand_bullet"), list) else []
+                    },
+                    "transcript_available": True,
+                    "source": "fireflies"
+                }
+                meetings.append(meeting)
             return {
-                "error": "Fireflies API error",
-                "details": result["errors"]
-            }
-        transcripts = result.get("data", {}).get("transcripts", [])
-        meetings = []
-        for transcript in transcripts:
-            summary = transcript.get("summary") or {}
-            meeting = {
-                "id": transcript.get("id"),
-                "title": transcript.get("title", "Untitled Meeting"),
-                "date": transcript.get("date"),
-                "duration": transcript.get("duration"),
-                "meeting_url": transcript.get("meeting_link"),
-                "participants": [
-                    {"name": name, "email": ""}
-                    for name in transcript.get("participants", [])
-                ],
-                "summary": {
-                    "keywords": summary.get("keywords") if isinstance(summary.get("keywords"), list) else [],
-                    "action_items": summary.get("action_items") if isinstance(summary.get("action_items"), list) else [],
-                    "outline": summary.get("outline", ""),
-                    "overview": summary.get("overview", ""),
-                    "key_points": summary.get("shorthand_bullet") if isinstance(summary.get("shorthand_bullet"), list) else []
-                },
-                "transcript_available": True,
+                "meetings": meetings,
+                "total_count": len(meetings),
                 "source": "fireflies"
             }
-            meetings.append(meeting)
-        return {
-            "meetings": meetings,
-            "total_count": len(meetings),
-            "source": "fireflies"
-        }
-    except requests.Timeout:
-        return {"error": "Request timeout - Fireflies API took too long to respond"}
-    except requests.RequestException as e:
-        return {"error": f"HTTP error {getattr(e.response, 'status_code', 'unknown')}", "details": str(e)}
-    except Exception as e:
-        return {"error": "Unexpected error occurred", "details": str(e)}
+        except (requests.Timeout, requests.RequestException) as e:
+            logger.warning(f"Fireflies API attempt {attempt+1} failed: {str(e)}")
+            time.sleep(2 ** attempt)
+            attempt += 1
+        except Exception as e:
+            logger.error(f"Unexpected error in Fireflies API: {str(e)}")
+            return {"error": "Unexpected error occurred", "details": str(e)}
+    return {"error": "Fireflies API failed after retries"}
 
 async def get_fireflies_meeting_details(transcript_id: str, api_key: str = None) -> Dict[str, Any]:
     """

@@ -97,7 +97,14 @@ export default function CompleteProfile() {
       </div>
     );
   }
-
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+        <div className="bg-red-100 text-red-700 px-4 py-2 rounded mb-4">{error}</div>
+      </div>
+    );
+  }
+  // Only show complete-profile UI when not loading and no error
   return (
     <main className="flex flex-col items-center justify-center min-h-screen p-8 bg-gray-50">
       <h2 className="text-2xl font-bold mb-6 text-blue-700">Complete Your Profile</h2>

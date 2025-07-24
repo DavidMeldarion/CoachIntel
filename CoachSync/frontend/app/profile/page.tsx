@@ -1,18 +1,19 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useUser } from "../../lib/userContext";
+import { useUser, User } from "../../lib/userContext";
 
-interface UserProfile {
+// Use the same type as context for full type safety
+export type UserProfile = {
   email: string;
+  name: string;
   first_name: string;
   last_name: string;
-  name: string; // Computed full name from backend
-  phone?: string;
-  address?: string;
   fireflies_api_key?: string;
   zoom_jwt?: string;
-}
+  phone?: string;
+  address?: string;
+};
 
 export default function Profile() {
   const router = useRouter();
@@ -24,19 +25,40 @@ export default function Profile() {
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<UserProfile>({
     email: "",
+    name: "",
     first_name: "",
     last_name: "",
-    name: "",
-    phone: "",
-    address: "",
     fireflies_api_key: "",
     zoom_jwt: "",
+    phone: "",
+    address: "",
   });
+  const [firefliesTestStatus, setFirefliesTestStatus] = useState<string>("");
+  const [testingFireflies, setTestingFireflies] = useState(false);
 
   useEffect(() => {
     if (user) {
-      setProfile(user);
-      setFormData(user);
+      // Map context user to local UserProfile type, ensuring required fields
+      setProfile({
+        email: user.email,
+        name: user.name || "",
+        first_name: user.first_name || "",
+        last_name: user.last_name || "",
+        fireflies_api_key: user.fireflies_api_key || "",
+        zoom_jwt: user.zoom_jwt || "",
+        phone: user.phone || "",
+        address: user.address || "",
+      });
+      setFormData({
+        email: user.email,
+        name: user.name || "",
+        first_name: user.first_name || "",
+        last_name: user.last_name || "",
+        fireflies_api_key: user.fireflies_api_key || "",
+        zoom_jwt: user.zoom_jwt || "",
+        phone: user.phone || "",
+        address: user.address || "",
+      });
       setLoading(false);
     } else {
       router.push("/login");
@@ -76,13 +98,13 @@ export default function Profile() {
     setFormData(
       profile || {
         email: "",
+        name: "",
         first_name: "",
         last_name: "",
-        name: "",
-        phone: "",
-        address: "",
         fireflies_api_key: "",
         zoom_jwt: "",
+        phone: "",
+        address: "",
       }
     );
     setIsEditing(false);
@@ -90,7 +112,26 @@ export default function Profile() {
     setSuccess("");
   }
 
-  if (userLoading) {
+  async function handleTestFireflies() {
+    setFirefliesTestStatus("");
+    setTestingFireflies(true);
+    try {
+      // Call proxy endpoint, which uses session context
+      const res = await fetch(`/api/test-fireflies`);
+      if (res.ok) {
+        setFirefliesTestStatus("Connection successful!");
+      } else {
+        const errorText = await res.text();
+        setFirefliesTestStatus("Connection failed. " + errorText);
+      }
+    } catch {
+      setFirefliesTestStatus("Connection failed. Please check your key.");
+    } finally {
+      setTestingFireflies(false);
+    }
+  }
+
+  if (loading) {
     return (
       <main className="flex items-center justify-center min-h-screen p-8 bg-gray-50">
         <div className="text-center">
@@ -100,7 +141,16 @@ export default function Profile() {
       </main>
     );
   }
-
+  if (error) {
+    return (
+      <main className="flex items-center justify-center min-h-screen p-8 bg-gray-50">
+        <div className="bg-red-100 text-red-700 px-4 py-2 rounded mb-4">
+          {error}
+        </div>
+      </main>
+    );
+  }
+  // Only show profile UI when not loading and no error
   return (
     <main className="min-h-screen p-8 bg-gray-50">
       <div className="max-w-2xl mx-auto">
@@ -234,20 +284,52 @@ export default function Profile() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Fireflies.ai API Key
                   </label>
-                  <input
-                    type="password"
-                    value={formData.fireflies_api_key || ""}
-                    onChange={(e) =>
-                      setFormData({ ...formData, fireflies_api_key: e.target.value })
-                    }
-                    disabled={!isEditing}
-                    className={`w-full border border-gray-300 rounded px-4 py-2 ${
-                      isEditing
-                        ? "focus:outline-none focus:ring-2 focus:ring-blue-200"
-                        : "bg-gray-50"
-                    }`}
-                    placeholder="Optional - for meeting transcription"
-                  />
+                  <div className="flex gap-2 items-center">
+                    <input
+                      type="password"
+                      value={formData.fireflies_api_key || ""}
+                      onChange={(e) =>
+                        setFormData({ ...formData, fireflies_api_key: e.target.value })
+                      }
+                      disabled={!isEditing}
+                      className={`w-full border border-gray-300 rounded px-4 py-2 ${
+                        isEditing
+                          ? "focus:outline-none focus:ring-2 focus:ring-blue-200"
+                          : "bg-gray-50"
+                      }`}
+                      placeholder="Optional - for meeting transcription"
+                    />
+                    {isEditing && (
+                      <button
+                        type="button"
+                        className={`px-3 py-2 rounded bg-blue-600 text-white font-semibold transition hover:bg-blue-700 ${
+                          testingFireflies ? "opacity-50 cursor-not-allowed" : ""
+                        }`}
+                        onClick={handleTestFireflies}
+                        disabled={testingFireflies || !formData.fireflies_api_key}
+                      >
+                        {testingFireflies ? (
+                          <span className="flex items-center gap-2">
+                            <span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></span>
+                            Testing...
+                          </span>
+                        ) : (
+                          "Test Connection"
+                        )}
+                      </button>
+                    )}
+                  </div>
+                  {firefliesTestStatus && (
+                    <div
+                      className={`mt-2 text-sm text-center ${
+                        firefliesTestStatus.includes("successful")
+                          ? "text-green-700"
+                          : "text-red-600"
+                      }`}
+                    >
+                      {firefliesTestStatus}
+                    </div>
+                  )}
                 </div>
 
                 <div>

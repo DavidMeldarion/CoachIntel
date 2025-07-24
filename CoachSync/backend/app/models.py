@@ -67,13 +67,15 @@ class User(Base):
 class Meeting(Base):
     __tablename__ = "meetings"
     id = Column(String, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(Integer, ForeignKey("users.id"), index=True)
     client_name = Column(String)
     title = Column(String)
-    date = Column(DateTime)
+    date = Column(DateTime, index=True)
     duration = Column(Integer)
     source = Column(String)
     transcript_id = Column(String)
+    participants = Column(JSON, nullable=True)  # List of participant dicts
+    transcript_url = Column(String, nullable=True)
     # Relationships
     user = relationship("User", back_populates="meetings")
     transcript = relationship("Transcript", back_populates="meeting", uselist=False)

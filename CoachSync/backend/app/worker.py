@@ -4,6 +4,7 @@ from app.models import User, Meeting, Transcript, SessionLocal  # Use sync sessi
 from app.integrations import fetch_fireflies_meetings_sync
 from sqlalchemy import select
 import datetime
+from celery.schedules import crontab
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = os.getenv("REDIS_PORT", "6379")
@@ -16,9 +17,10 @@ celery_app = Celery(
 )
 
 celery_app.conf.beat_schedule = {
-    'sync-fireflies-meetings-every-5-minutes': {
+    'sync-fireflies-meetings-hourly': {
         'task': 'worker.sync_fireflies_meetings',
-        'schedule': 300.0,  # every 5 minutes
+        'schedule': crontab(minute=0, hour='*'),  # Every hour, on the hour
+        'args': ()  # No args: sync for all users with API keys
     },
 }
 
@@ -41,7 +43,17 @@ def sync_fireflies_meetings(user_email=None, api_key=None):
         else:
             users = session.query(User).filter(User.fireflies_api_key.isnot(None)).all()
         for user in users:
-            meetings_data = fetch_fireflies_meetings_sync(user.email, user.fireflies_api_key, limit=50)
+            try:
+                meetings_data = fetch_fireflies_meetings_sync(user.email, user.fireflies_api_key, limit=50)
+            except Exception as e:
+                # Log error and continue to next user
+                import logging
+                logging.error(f"Fireflies API error for user {user.email}: {e}")
+                continue
+            if 'error' in meetings_data:
+                import logging
+                logging.error(f"Fireflies API returned error for user {user.email}: {meetings_data['error']} | Details: {meetings_data.get('details')}")
+                continue
             for m in meetings_data.get('meetings', []):
                 raw_date = m['date']
                 if isinstance(raw_date, int):
