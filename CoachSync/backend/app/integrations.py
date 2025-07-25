@@ -33,8 +33,8 @@ async def fetch_fireflies_meetings(user_email: str, api_key: str = None, limit: 
     
     # GraphQL query to fetch transcripts (meetings) - optimized for timeline view
     query = """
-    query GetTranscripts($limit: Int!, $hostEmail: String) {
-        transcripts(limit: $limit, host_email: $hostEmail) {
+    query {
+        transcripts {
             id
             title
             date
@@ -47,7 +47,14 @@ async def fetch_fireflies_meetings(user_email: str, api_key: str = None, limit: 
                 shorthand_bullet
                 overview
             }
-            participants
+            participants {
+                name
+                email
+                user_id
+            }
+            sentences {
+                text
+            }
         }
     }
     """
@@ -70,6 +77,7 @@ async def fetch_fireflies_meetings(user_email: str, api_key: str = None, limit: 
     attempt = 0
     while attempt < max_retries:
         try:
+            logger.info(f"[Fireflies API] Sending payload: {json.dumps(payload, indent=2)}")
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     FIREFLIES_API_URL, 
@@ -90,7 +98,17 @@ async def fetch_fireflies_meetings(user_email: str, api_key: str = None, limit: 
                 meetings = []
                 for transcript in transcripts:
                     summary = transcript.get("summary") or {}
-                    # Convert Fireflies transcript to our meeting format
+                    # Defensive: ensure sentences and participants are always lists
+                    sentences = transcript.get("sentences") or []
+                    participants = transcript.get("participants") or []
+                    # Build readable transcript with speaker attribution
+                    readable_transcript = []
+                    for s in sentences:
+                        speaker = s.get("speaker_name", "Unknown")
+                        text = s.get("text", "")
+                        if text:
+                            readable_transcript.append(f"{speaker}: {text}")
+                    full_text = "\n".join(readable_transcript)
                     meeting = {
                         "id": transcript.get("id"),
                         "title": transcript.get("title", "Untitled Meeting"),
@@ -99,7 +117,7 @@ async def fetch_fireflies_meetings(user_email: str, api_key: str = None, limit: 
                         "meeting_url": transcript.get("meeting_link"),
                         "participants": [
                             {"name": name, "email": ""} 
-                            for name in transcript.get("participants", [])
+                            for name in participants
                         ],
                         "summary": {
                             "keywords": summary.get("keywords") if isinstance(summary.get("keywords"), list) else [],
@@ -108,8 +126,9 @@ async def fetch_fireflies_meetings(user_email: str, api_key: str = None, limit: 
                             "overview": summary.get("overview", ""),
                             "key_points": summary.get("shorthand_bullet") if isinstance(summary.get("shorthand_bullet"), list) else []
                         },
-                        "transcript_available": True,  # Assume transcripts are available for all meetings
-                        "source": "fireflies"
+                        "transcript_available": True,
+                        "source": "fireflies",
+                        "full_text": full_text
                     }
                     meetings.append(meeting)
                 
@@ -135,8 +154,8 @@ def fetch_fireflies_meetings_sync(user_email: str, api_key: str = None, limit: i
     if not api_key:
         return {"error": "Fireflies API key not provided"}
     query = """
-    query GetTranscripts($limit: Int!, $hostEmail: String) {
-        transcripts(limit: $limit, host_email: $hostEmail) {
+    query {
+        transcripts {
             id
             title
             date
@@ -150,24 +169,25 @@ def fetch_fireflies_meetings_sync(user_email: str, api_key: str = None, limit: i
                 overview
             }
             participants
+            sentences {
+                speaker_name
+                text
+            }
         }
     }
     """
-    variables = {
-        "limit": limit,
-        "hostEmail": user_email
+    payload = {
+        "query": query,
+        "variables": {}
     }
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}"
     }
-    payload = {
-        "query": query,
-        "variables": variables
-    }
     attempt = 0
     while attempt < max_retries:
         try:
+            logger.info(f"[Fireflies API] Sending payload: {json.dumps(payload, indent=2)}")
             response = requests.post(
                 FIREFLIES_API_URL,
                 headers=headers,
@@ -183,6 +203,17 @@ def fetch_fireflies_meetings_sync(user_email: str, api_key: str = None, limit: i
             meetings = []
             for transcript in transcripts:
                 summary = transcript.get("summary") or {}
+                # Defensive: ensure sentences and participants are always lists
+                sentences = transcript.get("sentences") or []
+                participants = transcript.get("participants") or []
+                # Build readable transcript with speaker attribution
+                readable_transcript = []
+                for s in sentences:
+                    speaker = s.get("speaker_name", "Unknown")
+                    text = s.get("text", "")
+                    if text:
+                        readable_transcript.append(f"{speaker}: {text}")
+                full_text = "\n".join(readable_transcript)
                 meeting = {
                     "id": transcript.get("id"),
                     "title": transcript.get("title", "Untitled Meeting"),
@@ -191,7 +222,7 @@ def fetch_fireflies_meetings_sync(user_email: str, api_key: str = None, limit: i
                     "meeting_url": transcript.get("meeting_link"),
                     "participants": [
                         {"name": name, "email": ""}
-                        for name in transcript.get("participants", [])
+                        for name in participants
                     ],
                     "summary": {
                         "keywords": summary.get("keywords") if isinstance(summary.get("keywords"), list) else [],
@@ -201,7 +232,8 @@ def fetch_fireflies_meetings_sync(user_email: str, api_key: str = None, limit: i
                         "key_points": summary.get("shorthand_bullet") if isinstance(summary.get("shorthand_bullet"), list) else []
                     },
                     "transcript_available": True,
-                    "source": "fireflies"
+                    "source": "fireflies",
+                    "full_text": full_text
                 }
                 meetings.append(meeting)
             return {

@@ -484,3 +484,42 @@ async def test_fireflies_connection(user: User = Depends(verify_jwt_user)):
     if result.get("error"):
         return JSONResponse(status_code=400, content={"success": False, "error": result["error"], "details": result.get("details")})
     return {"success": True}
+
+@app.get("/meetings/{meeting_id}")
+async def get_meeting_with_transcript(meeting_id: str, user: User = Depends(verify_jwt_user)):
+    """
+    Return meeting details and full transcript for a given meeting ID (for the authenticated user).
+    Logs detailed errors if not found.
+    """
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Meeting).options(selectinload(Meeting.transcript)).where(Meeting.id == meeting_id, Meeting.user_id == user.id)
+        )
+        meeting = result.scalar_one_or_none()
+        if not meeting:
+            import logging
+            logging.error(f"Meeting not found: id={meeting_id}, user_id={user.id}")
+            # Optionally, check if meeting exists for any user
+            other_result = await session.execute(select(Meeting).where(Meeting.id == meeting_id))
+            other_meeting = other_result.scalar_one_or_none()
+            if other_meeting:
+                logging.error(f"Meeting id={meeting_id} exists but not for user_id={user.id}")
+            return {"error": "Meeting not found"}
+        transcript = None
+        if meeting.transcript:
+            transcript = {
+                "full_text": meeting.transcript.full_text,
+                "summary": meeting.transcript.summary,
+                "action_items": meeting.transcript.action_items,
+            }
+        date_str = meeting.date.isoformat() + 'Z' if meeting.date and meeting.date.tzinfo is None else meeting.date.isoformat() if meeting.date else None
+        return {
+            "id": meeting.id,
+            "client_name": meeting.client_name,
+            "title": meeting.title,
+            "date": date_str,
+            "duration": meeting.duration,
+            "source": meeting.source,
+            "participants": meeting.participants,
+            "transcript": transcript
+        }

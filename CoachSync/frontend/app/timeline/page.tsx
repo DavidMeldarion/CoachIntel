@@ -266,6 +266,14 @@ export default function MeetingTimeline() {
                           </ul>
                         </div>
                       )}
+                      <div className="mt-4">
+                        <a
+                          href={`/timeline/${meeting.id}`}
+                          className="inline-block px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+                        >
+                          View Full Transcript
+                        </a>
+                      </div>
                     </div>
                   ))}
                 </div>
