@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import selectinload
 import logging
 from celery.result import AsyncResult
+import json
 
 from .integrations import fetch_fireflies_meetings, fetch_zoom_meetings, get_fireflies_meeting_details
 from .models import User, create_or_update_user, get_user_by_email, Meeting, Transcript, AsyncSessionLocal
@@ -21,6 +22,10 @@ from .worker import sync_fireflies_meetings  # Import Celery task for Fireflies 
 
 logger = logging.getLogger("coachsync")
 logger.setLevel(logging.INFO)
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logger.addHandler(handler)
 
 app = FastAPI()
 
@@ -460,13 +465,47 @@ def get_sync_status(task_id: str):
     Return the status of a Celery sync task by task_id.
     Possible states: PENDING, STARTED, SUCCESS, FAILURE, etc.
     """
+    import time
+    now = time.time()
+    logger.info(f"[SYNC STATUS] Poll timestamp: {now}")
     result = AsyncResult(task_id)
-    response = {"task_id": task_id, "status": result.status, "ready": result.ready(), "successful": result.successful()}
+    # Log raw Redis value for the task result key
+    try:
+        redis_backend = result.backend
+        redis_client = getattr(redis_backend, 'client', None)
+        if redis_client:
+            redis_key = redis_backend.get_key_for_task(task_id)
+            raw_value = redis_client.get(redis_key)
+            logger.info(f"[SYNC STATUS] Redis key: {redis_key}")
+            logger.info(f"[SYNC STATUS] Raw Redis value: {raw_value}")
+        else:
+            logger.warning("[SYNC STATUS] Could not access Redis client from Celery backend.")
+    except Exception as e:
+        logger.warning(f"[SYNC STATUS] Error reading raw Redis value: {e}")
+    logger.info(f"[SYNC STATUS] Checking task_id={task_id} status={result.status} ready={result.ready()} successful={result.successful()} result={result.result} type={type(result.result)}")
+    response = {"task_id": task_id, "status": result.status, "ready": result.ready(), "successful": result.successful(), "timestamp": now}
     if result.status == "FAILURE":
+        logger.error(f"[SYNC STATUS] Task failed: {result.result}")
         response["error"] = str(result.result)
-    elif result.status == "SUCCESS" and isinstance(result.result, dict):
-        # If sync task returns summary, include it
-        response["summary"] = result.result.get("summary")
+    elif result.status == "SUCCESS":
+        logger.info(f"[SYNC STATUS] Task succeeded: {result.result}")
+        if isinstance(result.result, str):
+            try:
+                parsed = json.loads(result.result)
+                logger.info(f"[SYNC STATUS] Parsed string result: {parsed}")
+                if isinstance(parsed, dict):
+                    response["summary"] = parsed.get("status") or parsed
+                else:
+                    response["summary"] = parsed
+            except Exception as e:
+                logger.warning(f"[SYNC STATUS] Could not parse string result: {e}")
+                response["summary"] = result.result
+        elif isinstance(result.result, dict):
+            response["summary"] = result.result.get("status") or result.result
+        else:
+            response["summary"] = result.result
+    else:
+        logger.info(f"[SYNC STATUS] Task not complete: status={result.status}")
     return response
 
 @app.get("/test-fireflies")

@@ -11,8 +11,10 @@ export async function GET(request: NextRequest) {
   let data;
   try {
     data = await response.json();
+    console.log("[SYNC STATUS API] Backend response:", data);
   } catch {
     // If not JSON, return a generic error
+    console.error("[SYNC STATUS API] Backend returned non-JSON response", response.status);
     return NextResponse.json(
       { error: "Backend returned non-JSON response", status: response.status },
       { status: response.status }
