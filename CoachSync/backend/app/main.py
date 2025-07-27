@@ -19,6 +19,7 @@ from .integrations import fetch_fireflies_meetings, fetch_zoom_meetings, get_fir
 from .models import User, create_or_update_user, get_user_by_email, Meeting, Transcript, AsyncSessionLocal
 from sqlalchemy import select
 from .worker import sync_fireflies_meetings  # Import Celery task for Fireflies only
+from .config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_TOKEN_URL, GOOGLE_CALENDAR_EVENTS_URL
 
 logger = logging.getLogger("coachsync")
 logger.setLevel(logging.INFO)
@@ -303,8 +304,11 @@ async def get_calendar_events(user: User = Depends(verify_jwt_user)):
     access_token, refresh_token, expiry = user.get_google_tokens()
     if not access_token:
         raise HTTPException(status_code=401, detail="No Google Calendar token")
-    # Refresh token if expired
-    if expiry and expiry < datetime.utcnow():
+    # Refresh token if expired or will expire in next 5 minutes
+    refresh_threshold = timedelta(minutes=5)
+    now = datetime.utcnow()
+    if expiry and expiry < now + refresh_threshold:
+        logger.info(f"Google token expired or expiring soon for user {user.email}. Attempting refresh...")
         data = {
             "client_id": GOOGLE_CLIENT_ID,
             "client_secret": GOOGLE_CLIENT_SECRET,
@@ -313,12 +317,16 @@ async def get_calendar_events(user: User = Depends(verify_jwt_user)):
         }
         async with httpx.AsyncClient() as client:
             resp = await client.post(GOOGLE_TOKEN_URL, data=data)
+            logger.info(f"Google token refresh response status: {resp.status_code}")
+            logger.info(f"Google token refresh response body: {resp.text}")
             if resp.status_code != 200:
+                logger.error(f"Failed to refresh Google token for user {user.email}: {resp.text}")
                 raise HTTPException(status_code=401, detail=f"Failed to refresh Google token: {resp.text}")
             tokens = resp.json()
         access_token = tokens["access_token"]
         expires_in = tokens.get("expires_in", 3600)
-        expiry = datetime.utcnow() + timedelta(seconds=expires_in)
+        expiry = now + timedelta(seconds=expires_in)
+        logger.info(f"Google token refreshed for user {user.email}. New expiry: {expiry}")
         user.set_google_tokens(access_token, refresh_token, expiry)
         async with AsyncSessionLocal() as session:
             session.add(user)
