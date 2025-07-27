@@ -14,9 +14,8 @@ branch_labels = None
 depends_on = None
 
 def upgrade():
-    op.add_column('users', sa.Column('google_access_token_encrypted', sa.String(), nullable=True))
-    op.add_column('users', sa.Column('google_refresh_token_encrypted', sa.String(), nullable=True))
-    op.add_column('users', sa.Column('google_token_expiry', sa.DateTime(), nullable=True))
+    return
+    # Columns already created in initial migration
 
 def downgrade():
     op.drop_column('users', 'google_access_token_encrypted')

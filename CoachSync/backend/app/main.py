@@ -15,7 +15,7 @@ import logging
 from celery.result import AsyncResult
 import json
 
-from .integrations import fetch_fireflies_meetings, fetch_zoom_meetings, get_fireflies_meeting_details
+from .integrations import fetch_fireflies_meetings, fetch_zoom_meetings, get_fireflies_meeting_details, test_fireflies_api_key
 from .models import User, create_or_update_user, get_user_by_email, Meeting, Transcript, AsyncSessionLocal
 from sqlalchemy import select
 from .worker import sync_fireflies_meetings  # Import Celery task for Fireflies only
@@ -511,15 +511,13 @@ def get_sync_status(task_id: str):
 @app.get("/test-fireflies")
 async def test_fireflies_connection(user: User = Depends(verify_jwt_user)):
     """
-    Test Fireflies API key for the authenticated user by making a real API call.
+    Test Fireflies API key for the authenticated user by making a minimal API call.
     Returns success/failure based on Fireflies API response.
     """
     api_key = user.fireflies_api_key
-    email = user.email
     if not api_key:
         return JSONResponse(status_code=400, content={"success": False, "error": "No Fireflies API key found for user."})
-    # Try to fetch a single meeting to validate the key
-    result = await fetch_fireflies_meetings(email, api_key, limit=1)
+    result = await test_fireflies_api_key(api_key)
     if result.get("error"):
         return JSONResponse(status_code=400, content={"success": False, "error": result["error"], "details": result.get("details")})
     return {"success": True}

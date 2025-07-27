@@ -1,3 +1,31 @@
+async def test_fireflies_api_key(api_key: str) -> dict:
+    """
+    Minimal query to Fireflies to validate API key.
+    """
+    query = """
+    query { me { email } }
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    payload = {"query": query}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                FIREFLIES_API_URL,
+                headers=headers,
+                json=payload
+            )
+            response.raise_for_status()
+            result = response.json()
+            if "errors" in result:
+                return {"error": "Fireflies API error", "details": result["errors"]}
+            if result.get("data", {}).get("me", {}).get("email"):
+                return {"success": True}
+            return {"error": "No user info returned"}
+    except Exception as e:
+        return {"error": "Failed to connect to Fireflies API", "details": str(e)}
 # Fireflies/Zoom API integration helpers for CoachSync
 import os
 import httpx

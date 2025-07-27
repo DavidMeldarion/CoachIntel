@@ -299,14 +299,14 @@ export default function Profile() {
                       }`}
                       placeholder="Optional - for meeting transcription"
                     />
-                    {isEditing && (
+                    {!isEditing && profile?.fireflies_api_key && (
                       <button
                         type="button"
                         className={`px-3 py-2 rounded bg-blue-600 text-white font-semibold transition hover:bg-blue-700 ${
                           testingFireflies ? "opacity-50 cursor-not-allowed" : ""
                         }`}
                         onClick={handleTestFireflies}
-                        disabled={testingFireflies || !formData.fireflies_api_key}
+                        disabled={testingFireflies}
                       >
                         {testingFireflies ? (
                           <span className="flex items-center gap-2">
