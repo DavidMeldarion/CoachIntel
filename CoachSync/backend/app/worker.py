@@ -42,6 +42,7 @@ def summarize_missing_transcripts():
     session = SessionLocal()
     try:
         transcripts = session.query(Transcript).filter((Transcript.summary == None) | (Transcript.summary == ""), Transcript.full_text.isnot(None)).all()
+        logging.info(f"[Summarization] Found {len(transcripts)} transcripts to summarize.")
         for transcript in transcripts:
             try:
                 result = summarize_meeting(transcript.full_text)

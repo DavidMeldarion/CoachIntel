@@ -94,25 +94,25 @@ def root():
     return {"message": "CoachSync backend API"}
 
 # Secure endpoints
-@app.post("/upload-audio/")
-async def upload_audio(file: UploadFile = File(...), user: User = Depends(verify_jwt_user)):
-    # Dummy: Save file, trigger transcription job
-    return {"filename": file.filename, "status": "received"}
+# @app.post("/upload-audio/")
+# async def upload_audio(file: UploadFile = File(...), user: User = Depends(verify_jwt_user)):
+#     # Dummy: Save file, trigger transcription job
+#     return {"filename": file.filename, "status": "received"}
 
-@app.get("/sessions/")
-async def get_sessions(user: User = Depends(verify_jwt_user)):
-    # Dummy: Return list of sessions
-    return [{"id": 1, "summary": "Session 1 summary"}]
+# @app.get("/sessions/")
+# async def get_sessions(user: User = Depends(verify_jwt_user)):
+#     # Dummy: Return list of sessions
+#     return [{"id": 1, "summary": "Session 1 summary"}]
 
-@app.post("/transcribe/")
-async def transcribe(user: User = Depends(verify_jwt_user)):
-    # Dummy: Trigger transcription
-    return {"status": "transcription started"}
+# @app.post("/transcribe/")
+# async def transcribe(user: User = Depends(verify_jwt_user)):
+#     # Dummy: Trigger transcription
+#     return {"status": "transcription started"}
 
-@app.post("/summarize/")
-async def summarize(user: User = Depends(verify_jwt_user)):
-    # Dummy: Trigger summarization
-    return {"status": "summarization started"}
+# @app.post("/summarize/")
+# async def summarize(user: User = Depends(verify_jwt_user)):
+#     # Dummy: Trigger summarization
+#     return {"status": "summarization started"}
 
 @app.get("/external-meetings/{source}/{meeting_id}")
 async def get_meeting_details(
