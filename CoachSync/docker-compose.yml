@@ -22,7 +22,7 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      - ./backend/.env
+      - .env
     volumes:
       - ./backend:/app
       - /app/__pycache__ # Prevents host __pycache__ from overwriting container's (optional)
@@ -32,7 +32,7 @@ services:
 
   worker:
     build: ./backend
-    command: celery -A app.worker.celery_app worker --loglevel=info
+    command: celery -A app.worker.celery_app worker --loglevel=debug
     env_file:
       - .env
     volumes:
@@ -58,6 +58,9 @@ services:
     image: redis:7
     ports:
       - "6379:6379"
+    volumes:
+      - redisdata:/data
 
 volumes:
   pgdata:
+  redisdata:

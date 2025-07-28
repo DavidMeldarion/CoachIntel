@@ -1,38 +1,10 @@
-async def test_fireflies_api_key(api_key: str) -> dict:
-    """
-    Minimal query to Fireflies to validate API key.
-    """
-    query = """
-    query { me { email } }
-    """
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    payload = {"query": query}
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                FIREFLIES_API_URL,
-                headers=headers,
-                json=payload
-            )
-            response.raise_for_status()
-            result = response.json()
-            if "errors" in result:
-                return {"error": "Fireflies API error", "details": result["errors"]}
-            if result.get("data", {}).get("me", {}).get("email"):
-                return {"success": True}
-            return {"error": "No user info returned"}
-    except Exception as e:
-        return {"error": "Failed to connect to Fireflies API", "details": str(e)}
 # Fireflies/Zoom API integration helpers for CoachSync
 import os
 import httpx
 import json
 import time
 import logging
-from datetime import datetime, timedelta
+import requests
 from typing import Optional, List, Dict, Any
 from httpx import TimeoutException, HTTPStatusError
 
@@ -42,6 +14,42 @@ FIREFLIES_API_URL = "https://api.fireflies.ai/graphql"
 
 logger = logging.getLogger("coachsync")
 logger.setLevel(logging.INFO)
+
+async def test_fireflies_api_key(api_key: str) -> dict:
+    """
+    Minimal query to Fireflies to validate API key.
+    """
+    # query =  """
+    # query {
+    #     user {
+    #         name
+    #     }
+    # }
+    # """
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    payload = {
+        "query": "{ user { user_id } }"
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                FIREFLIES_API_URL,
+                headers=headers,
+                json=payload
+            )
+            response.raise_for_status()
+            result = response.json()
+            print(result)
+            if "errors" in result:
+                return {"error": "Fireflies API error", "details": result["errors"]}
+            if result.get("data", {}).get("user", {}).get("user_id"):
+                return {"success": True}
+            return {"error": "No user info returned"}
+    except Exception as e:
+        return {"error": "Failed to connect to Fireflies API", "details": str(e)}
 
 async def fetch_fireflies_meetings(user_email: str, api_key: str = None, limit: int = 10, max_retries: int = 3) -> Dict[str, Any]:
     """
@@ -176,7 +184,6 @@ async def fetch_fireflies_meetings(user_email: str, api_key: str = None, limit: 
     return {"error": "Fireflies API failed after retries"}
 
 def fetch_fireflies_meetings_sync(user_email: str, api_key: str = None, limit: int = 10, max_retries: int = 3) -> Dict[str, Any]:
-    import requests
     if not api_key:
         api_key = FIREFLIES_API_KEY
     if not api_key:

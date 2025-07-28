@@ -5,6 +5,10 @@ import { useEffect, useState } from "react";
 import { useSync } from "../../lib/syncContext";
 
 export default function MeetingTimeline() {
+  if (typeof window !== "undefined") {
+    console.log("[Timeline] Component mounted in browser");
+  }
+
   const { lastSync } = useSync();
   const [meetings, setMeetings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -23,19 +27,36 @@ export default function MeetingTimeline() {
     setLoading(true);
     setError("");
     try {
-      // Add cache-busting param to always get fresh data
-      const response = await fetch(`/api/meetings?ts=${Date.now()}`, { credentials: "include" });
+      const url = `/api/meetings?ts=${Date.now()}`;
+      if (typeof window !== "undefined") {
+        console.log("[Timeline] Fetching meetings from:", url);
+      }
+      const response = await fetch(url, { credentials: "include" });
+      if (typeof window !== "undefined") {
+        console.log("[Timeline] Raw response status:", response.status);
+      }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
-      setMeetings(data.meetings || []);
+      if (typeof window !== "undefined") {
+        console.log("[Timeline] Parsed response data:", data);
+      }
+      // Normalize participants to always be an array of strings for display
+      const normalizedMeetings = (data.meetings || []).map((m: any) => ({
+        ...m,
+        participants: Array.isArray(m.participants)
+          ? m.participants.map((p: any) => typeof p === "string" ? p : (p?.name || p?.email || ""))
+          : [],
+      }));
+      setMeetings(normalizedMeetings);
     } catch (err) {
       setError(`Failed to fetch meetings: ${err}`);
+      console.error("[Timeline] Error fetching meetings:", err);
     } finally {
       setLoading(false);
     }
   };
 
-  // Auto-refresh meetings every 5 minutes
+  // Auto-refresh meetings every 5 minutes (also updates overview if changed in DB)
   useEffect(() => {
     fetchStoredMeetings();
     const interval = setInterval(fetchStoredMeetings, 5 * 60 * 1000);
@@ -181,7 +202,7 @@ export default function MeetingTimeline() {
                   className="border rounded px-2 py-1 text-sm"
                   value={keyword}
                   onChange={e => { setKeyword(e.target.value); setCurrentPage(1); }}
-                  placeholder="Search keywords or overview"
+                  placeholder="Search overview"
                 />
               </div>
               <div className="flex items-center gap-2">
@@ -246,26 +267,27 @@ export default function MeetingTimeline() {
                           <p className="text-gray-700 mt-1">{meeting.transcript.summary.overview}</p>
                         </div>
                       )}
-                      {meeting.transcript?.summary?.keywords?.length > 0 && (
-                        <div className="mb-3">
-                          <strong>Keywords:</strong>
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {meeting.transcript.summary.keywords.map((keyword: string, i: number) => (
-                              <span key={i} className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs">{keyword}</span>
-                            ))}
+                      {meeting.transcript?.summary?.action_items?.length > 0
+                        ? (
+                          <div>
+                            <strong>Action Items:</strong>
+                            <ul className="list-disc list-inside mt-1 text-gray-700">
+                              {meeting.transcript.summary.action_items.map((item: string, i: number) => (
+                                <li key={i}>{item}</li>
+                              ))}
+                            </ul>
                           </div>
-                        </div>
-                      )}
-                      {meeting.transcript?.summary?.action_items?.length > 0 && (
-                        <div>
-                          <strong>Action Items:</strong>
-                          <ul className="list-disc list-inside mt-1 text-gray-700">
-                            {meeting.transcript.summary.action_items.map((item: string, i: number) => (
-                              <li key={i}>{item}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
+                        )
+                        : (meeting.transcript?.action_items?.length > 0 && (
+                          <div>
+                            <strong>Action Items:</strong>
+                            <ul className="list-disc list-inside mt-1 text-gray-700">
+                              {meeting.transcript.action_items.map((item: string, i: number) => (
+                                <li key={i}>{item}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ))}
                       <div className="mt-4">
                         <a
                           href={`/timeline/${meeting.id}`}

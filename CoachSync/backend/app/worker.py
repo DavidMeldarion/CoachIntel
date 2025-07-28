@@ -8,6 +8,7 @@ from app.models import User, Meeting, Transcript, SessionLocal  # Use sync sessi
 from app.integrations import fetch_fireflies_meetings_sync
 from app.summarization import summarize_meeting
 from app.config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_TOKEN_URL
+from sqlalchemy import or_, cast, Text
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = os.getenv("REDIS_PORT", "6379")
@@ -17,6 +18,13 @@ celery_app = Celery(
     'worker',
     broker=REDIS_URL,
     backend=REDIS_URL
+)
+
+celery_app.conf.result_expires = 3600  # 1 hour expiry for task results
+celery_app.conf.update(
+    result_serializer='json',
+    task_serializer='json',
+    accept_content=['json'],
 )
 
 celery_app.conf.beat_schedule = {
@@ -30,25 +38,29 @@ celery_app.conf.beat_schedule = {
         'schedule': crontab(minute='*/10'),
         'args': ()
     },
-    'summarize-missing-transcripts-every-15-minutes': {
-        'task': 'worker.summarize_missing_transcripts',
-        'schedule': crontab(minute='*/15'),
-        'args': ()
-    },
+    # 'summarize-missing-transcripts-every-15-minutes': {
+    #     'task': 'worker.summarize_missing_transcripts',
+    #     'schedule': crontab(minute='*/15'),
+    #     'args': ()
+    # },
 }
 
 @celery_app.task
 def summarize_missing_transcripts():
     session = SessionLocal()
     try:
-        transcripts = session.query(Transcript).filter((Transcript.summary == None) | (Transcript.summary == ""), Transcript.full_text.isnot(None)).all()
+        # Only select where summary IS NULL or summary is an empty object
+        transcripts = session.query(Transcript).filter(
+            or_(Transcript.summary == None, cast(Transcript.summary, Text) == '{}'),
+            Transcript.full_text.isnot(None)
+        ).all()
         logging.info(f"[Summarization] Found {len(transcripts)} transcripts to summarize.")
         for transcript in transcripts:
             try:
-                result = summarize_meeting(transcript.full_text)
-                transcript.summary = result.get("summary", "")
-                transcript.action_items = result.get("action_items", [])
-                transcript.progress_notes = result.get("progress_notes", "")
+                summary = summarize_meeting(transcript.full_text)
+                print (f"Final summary: {summary}")
+                transcript.summary = summary
+                transcript.action_items = summary.get("action_items", [])
                 session.add(transcript)
                 session.commit()
                 logging.info(f"[Summarization] Transcript {transcript.id} summarized successfully.")
@@ -121,11 +133,9 @@ def sync_fireflies_meetings(user_email=None, api_key=None):
             try:
                 meetings_data = fetch_fireflies_meetings_sync(user.email, user.fireflies_api_key, limit=50)
             except Exception as e:
-                import logging
                 logging.error(f"Fireflies API error for user {user.email}: {e}")
                 continue
             if 'error' in meetings_data:
-                import logging
                 logging.error(f"Fireflies API returned error for user {user.email}: {meetings_data['error']} | Details: {meetings_data.get('details')}")
                 continue
             for m in meetings_data.get('meetings', []):
@@ -144,48 +154,43 @@ def sync_fireflies_meetings(user_email=None, api_key=None):
                 meeting_id = m['id']
                 # Use full_text from GraphQL response only
                 full_text = m.get('full_text', '')
-                existing = session.query(Meeting).filter(Meeting.id == meeting_id, Meeting.user_id == user.id).one_or_none()
-                if existing:
-                    existing.client_name = m['participants'][0]['name'] if m['participants'] else ''
-                    existing.title = m['title']
-                    existing.date = meeting_date
-                    existing.duration = m['duration']
-                    existing.source = m['source']
-                    existing.transcript_id = meeting_id
-                    transcript_obj = session.query(Transcript).filter(Transcript.id == meeting_id).one_or_none()
-                    if transcript_obj:
-                        transcript_obj.summary = m['summary']
-                        transcript_obj.action_items = m['summary'].get('action_items', [])
-                        transcript_obj.full_text = full_text
-                    else:
-                        transcript = Transcript(
-                            id=meeting_id,
-                            meeting_id=meeting_id,
-                            full_text=full_text,
-                            summary=m['summary'],
-                            action_items=m['summary'].get('action_items', [])
-                        )
-                        session.add(transcript)
-                    continue
-                meeting = Meeting(
-                    id=meeting_id,
-                    user_id=user.id,
-                    client_name=m['participants'][0]['name'] if m['participants'] else '',
-                    title=m['title'],
-                    date=meeting_date,
-                    duration=m['duration'],
-                    source=m['source'],
-                    transcript_id=meeting_id
-                )
-                session.add(meeting)
-                transcript = Transcript(
-                    id=meeting_id,
-                    meeting_id=meeting_id,
-                    full_text=full_text,
-                    summary=m['summary'],
-                    action_items=m['summary'].get('action_items', [])
-                )
-                session.add(transcript)
+                # Idempotency: update or create Meeting and Transcript by meeting_id and user_id
+                existing_meeting = session.query(Meeting).filter(Meeting.id == meeting_id, Meeting.user_id == user.id).one_or_none()
+                if existing_meeting:
+                    existing_meeting.client_name = m['participants'][0]['name'] if m['participants'] else ''
+                    existing_meeting.title = m['title']
+                    existing_meeting.date = meeting_date
+                    existing_meeting.duration = m['duration']
+                    existing_meeting.source = m['source']
+                    existing_meeting.transcript_id = meeting_id
+                    session.merge(existing_meeting)
+                else:
+                    meeting = Meeting(
+                        id=meeting_id,
+                        user_id=user.id,
+                        client_name=m['participants'][0]['name'] if m['participants'] else '',
+                        title=m['title'],
+                        date=meeting_date,
+                        duration=m['duration'],
+                        source=m['source'],
+                        transcript_id=meeting_id
+                    )
+                    session.add(meeting)
+                existing_transcript = session.query(Transcript).filter(Transcript.id == meeting_id).one_or_none()
+                if existing_transcript:
+                    existing_transcript.summary = m['summary']
+                    existing_transcript.action_items = m['summary'].get('action_items', [])
+                    existing_transcript.full_text = full_text
+                    session.merge(existing_transcript)
+                else:
+                    transcript = Transcript(
+                        id=meeting_id,
+                        meeting_id=meeting_id,
+                        full_text=full_text,
+                        summary=m['summary'],
+                        action_items=m['summary'].get('action_items', [])
+                    )
+                    session.add(transcript)
         session.commit()
     finally:
         session.close()

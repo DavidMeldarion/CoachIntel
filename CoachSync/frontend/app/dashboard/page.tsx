@@ -221,7 +221,7 @@ function Dashboard() {
       let pollCount = 0;
       while (status !== "SUCCESS" && status !== "FAILURE" && pollCount < 30) {
         await new Promise(r => setTimeout(r, 2000)); // 2s delay between polls
-        const statusRes = await fetch(`/api/sync/status/${data.task_id}`);
+        const statusRes = await fetch(`/api/sync/status/${data.task_id}?_=${Date.now()}_${Math.random()}`);
         const statusData = await statusRes.json();
         console.log("[DASHBOARD SYNC] Polled status:", statusData);
         status = statusData.status;
@@ -260,6 +260,27 @@ function Dashboard() {
       hour12: true
     });
   }
+
+  // Add at the top, after imports
+  const Tooltip = ({ text, children }: { text: string, children: React.ReactNode }) => {
+    const [show, setShow] = useState(false);
+    return (
+      <span className="relative inline-block"
+        onMouseEnter={() => setShow(true)}
+        onMouseLeave={() => setShow(false)}
+        onFocus={() => setShow(true)}
+        onBlur={() => setShow(false)}
+        tabIndex={0}
+      >
+        {children}
+        {show && (
+          <span className="absolute z-10 left-1/2 -translate-x-1/2 mt-2 px-3 py-1 rounded bg-gray-800 text-white text-xs whitespace-nowrap shadow-lg">
+            {text}
+          </span>
+        )}
+      </span>
+    );
+  };
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen p-8 bg-gray-50">
@@ -352,15 +373,30 @@ function Dashboard() {
             </div>
             {/* 4. Meeting Stats */}
             <div className="grid grid-cols-2 gap-4">
-              <div className="bg-blue-50 rounded-lg p-4 flex flex-col items-center">
-                <span className="text-3xl font-bold text-blue-700">{meetingStats.total}</span>
-                <span className="text-gray-700">Total Meetings</span>
+              <div className="bg-green-50 rounded-lg p-4 flex flex-col items-center border border-green-200">
+                <span className="text-3xl font-bold text-green-700">{meetingStats.total}</span>
+                <span className="text-gray-700 flex items-center gap-1">
+                  Total Completed Meetings
+                  <Tooltip text="All meetings completed">
+                    <span className="ml-1 cursor-pointer" aria-label="info">🛈</span>
+                  </Tooltip>
+                </span>
               </div>
-              <div className="bg-green-50 rounded-lg p-4 flex flex-col items-center">
+              <div className="bg-green-50 rounded-lg p-4 flex flex-col items-center border border-green-200">
                 <span className="text-xl font-bold text-green-700">{meetingStats.week}</span>
-                <span className="text-gray-700">This Week</span>
+                <span className="text-gray-700 flex items-center gap-1">
+                  Completed this Week
+                  <Tooltip text="Meetings with a date earlier than now, this week only">
+                    <span className="ml-1 cursor-pointer" aria-label="info">🛈</span>
+                  </Tooltip>
+                </span>
                 <span className="text-xl font-bold text-green-700 mt-2">{meetingStats.month}</span>
-                <span className="text-gray-700">This Month</span>
+                <span className="text-gray-700 flex items-center gap-1">
+                  Completed this Month
+                  <Tooltip text="Meetings with a date earlier than now, this month only">
+                    <span className="ml-1 cursor-pointer" aria-label="info">🛈</span>
+                  </Tooltip>
+                </span>
               </div>
               <div className="col-span-2 bg-gray-50 rounded-lg p-4 mt-2">
                 <span className="font-semibold text-gray-700">By Type:</span>

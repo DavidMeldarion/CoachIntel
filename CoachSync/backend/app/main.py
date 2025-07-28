@@ -1,10 +1,12 @@
 # Dummy FastAPI app for CoachSync backend
-from fastapi import FastAPI, UploadFile, File, Query, Request, Body, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi import HTTPException
-from pydantic import BaseModel
 import os
+import time
 import jwt
+import json
+import logging
+from fastapi import FastAPI, HTTPException, UploadFile, File, Query, Request, Body, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 import httpx
@@ -13,12 +15,10 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import selectinload
 import logging
 from celery.result import AsyncResult
-import json
-
-from .integrations import fetch_fireflies_meetings, fetch_zoom_meetings, get_fireflies_meeting_details, test_fireflies_api_key
+from .integrations import get_fireflies_meeting_details, test_fireflies_api_key
 from .models import User, create_or_update_user, get_user_by_email, Meeting, Transcript, AsyncSessionLocal
 from sqlalchemy import select
-from .worker import sync_fireflies_meetings  # Import Celery task for Fireflies only
+from .worker import sync_fireflies_meetings, celery_app, REDIS_URL  # Import Celery task for Fireflies only
 from .config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_TOKEN_URL, GOOGLE_CALENDAR_EVENTS_URL
 
 logger = logging.getLogger("coachsync")
@@ -474,9 +474,11 @@ def get_sync_status(task_id: str):
     Possible states: PENDING, STARTED, SUCCESS, FAILURE, etc.
     """
     logger.info(f"[SYNC STATUS] Checking status for task ID: {task_id}")
-    import time
+    logger.info(f"[SYNC STATUS] Using Redis URL: {REDIS_URL}")
+    
     now = time.time()
     result = AsyncResult(task_id)
+    logger.info(f"[SYNC STATUS] Result: status={result.status}, ready={result.ready()}, successful={result.successful()}, result={result.result}")
     response = {"task_id": task_id, "status": result.status, "ready": result.ready(), "successful": result.successful(), "timestamp": now}
     if result.status == "FAILURE":
         logger.error(f"[SYNC STATUS] Task failed: {result.result}")
@@ -526,7 +528,6 @@ async def get_meeting_with_transcript(meeting_id: str, user: User = Depends(veri
         )
         meeting = result.scalar_one_or_none()
         if not meeting:
-            import logging
             logging.error(f"Meeting not found: id={meeting_id}, user_id={user.id}")
             # Optionally, check if meeting exists for any user
             other_result = await session.execute(select(Meeting).where(Meeting.id == meeting_id))
@@ -552,3 +553,32 @@ async def get_meeting_with_transcript(meeting_id: str, user: User = Depends(veri
             "participants": meeting.participants,
             "transcript": transcript
         }
+
+@app.get("/health")
+async def health():
+    # Check DB
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(select(1))
+    except Exception as e:
+        return {"ok": False, "db": False, "error": str(e)}
+    # Check Celery/Redis
+    try:
+        # Send a dummy task and check status
+        result = celery_app.send_task('worker.summarize_missing_transcripts')
+        _ = AsyncResult(result.id)
+    except Exception as e:
+        return {"ok": False, "celery": False, "error": str(e)}
+    return {"ok": True, "db": True, "celery": True}
+
+from fastapi import status
+
+@app.post("/summarize-missing-transcripts", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_summarize_missing_transcripts():
+    """
+    Trigger the Celery task to summarize all missing transcripts.
+    Returns the Celery task id.
+    """
+    from .worker import celery_app
+    result = celery_app.send_task('app.worker.summarize_missing_transcripts')
+    return {"task_id": result.id, "status": "started"}

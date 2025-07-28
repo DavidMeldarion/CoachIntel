@@ -87,6 +87,7 @@ class Transcript(Base):
     full_text = Column(Text)
     summary = Column(JSON)
     action_items = Column(JSON)
+    progress_notes = Column(Text)  # New field for cumulative progress notes
     # Relationship
     meeting = relationship("Meeting", back_populates="transcript")
 

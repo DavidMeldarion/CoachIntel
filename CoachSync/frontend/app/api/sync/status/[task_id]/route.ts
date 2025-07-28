@@ -17,8 +17,8 @@ export async function GET(request: NextRequest) {
     console.error("[SYNC STATUS API] Backend returned non-JSON response", response.status);
     return NextResponse.json(
       { error: "Backend returned non-JSON response", status: response.status },
-      { status: response.status }
+      { status: response.status, headers: { "Cache-Control": "no-store" } }
     );
   }
-  return NextResponse.json(data, { status: response.status });
+  return NextResponse.json(data, { status: response.status, headers: { "Cache-Control": "no-store" } });
 }
