@@ -1,72 +1,13 @@
 import logging
 import httpx
-from datetime import datetime, timedelta
-from celery import Celery
-import os
-from app.models import User, Meeting, Transcript, SessionLocal  # Use sync session
-from app.integrations import fetch_fireflies_meetings_sync
-from sqlalchemy import select
-from app.config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_TOKEN_URL
-
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = os.getenv("REDIS_PORT", "6379")
-REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
-
-celery_app = Celery(
-    'worker',
-    broker=REDIS_URL,
-    backend=REDIS_URL
-)
-
-from celery.schedules import crontab
-
-def refresh_google_token_for_user(user, session):
-    access_token, refresh_token, expiry = user.get_google_tokens()
-    refresh_threshold = timedelta(minutes=5)
-    now = datetime.utcnow()
-    if refresh_token and expiry and expiry < now + refresh_threshold:
-        logging.info(f"[Google Token Refresh] Attempting refresh for user {user.email}")
-        data = {
-            "client_id": GOOGLE_CLIENT_ID,
-            "client_secret": GOOGLE_CLIENT_SECRET,
-            "refresh_token": refresh_token,
-            "grant_type": "refresh_token"
-        }
-        try:
-            resp = httpx.post(GOOGLE_TOKEN_URL, data=data, timeout=10.0)
-            logging.info(f"[Google Token Refresh] Response status: {resp.status_code}")
-            logging.info(f"[Google Token Refresh] Response body: {resp.text}")
-            if resp.status_code == 200:
-                tokens = resp.json()
-                new_access_token = tokens["access_token"]
-                expires_in = tokens.get("expires_in", 3600)
-                new_expiry = now + timedelta(seconds=expires_in)
-                user.set_google_tokens(new_access_token, refresh_token, new_expiry)
-                session.add(user)
-                session.commit()
-                logging.info(f"[Google Token Refresh] Token refreshed for user {user.email}. New expiry: {new_expiry}")
-            else:
-                logging.error(f"[Google Token Refresh] Failed for user {user.email}: {resp.text}")
-        except Exception as e:
-            logging.error(f"[Google Token Refresh] Exception for user {user.email}: {e}")
-
-@celery_app.task
-def refresh_all_google_tokens():
-    session = SessionLocal()
-    try:
-        users = session.query(User).filter(User.google_refresh_token_encrypted.isnot(None)).all()
-        for user in users:
-            refresh_google_token_for_user(user, session)
-    finally:
-        session.close()
-    return {"status": "google token refresh complete"}
-from celery import Celery
-import os
-from app.models import User, Meeting, Transcript, SessionLocal  # Use sync session
-from app.integrations import fetch_fireflies_meetings_sync
-from sqlalchemy import select
 import datetime
+import os
+from celery import Celery
 from celery.schedules import crontab
+from app.models import User, Meeting, Transcript, SessionLocal  # Use sync session
+from app.integrations import fetch_fireflies_meetings_sync
+from app.summarization import summarize_meeting
+from app.config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_TOKEN_URL
 
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 REDIS_PORT = os.getenv("REDIS_PORT", "6379")
@@ -89,17 +30,83 @@ celery_app.conf.beat_schedule = {
         'schedule': crontab(minute='*/10'),
         'args': ()
     },
+    'summarize-missing-transcripts-every-15-minutes': {
+        'task': 'worker.summarize_missing_transcripts',
+        'schedule': crontab(minute='*/15'),
+        'args': ()
+    },
 }
 
 @celery_app.task
-def transcribe_audio_task(audio_path):
-    # Dummy: Transcribe audio
-    return f"Transcribed: {audio_path}"
+def summarize_missing_transcripts():
+    session = SessionLocal()
+    try:
+        transcripts = session.query(Transcript).filter((Transcript.summary == None) | (Transcript.summary == ""), Transcript.full_text.isnot(None)).all()
+        for transcript in transcripts:
+            try:
+                result = summarize_meeting(transcript.full_text)
+                transcript.summary = result.get("summary", "")
+                transcript.action_items = result.get("action_items", [])
+                transcript.progress_notes = result.get("progress_notes", "")
+                session.add(transcript)
+                session.commit()
+                logging.info(f"[Summarization] Transcript {transcript.id} summarized successfully.")
+            except Exception as e:
+                logging.error(f"[Summarization] Failed to summarize transcript {transcript.id}: {e}")
+    finally:
+        session.close()
+    return {"status": "summarization complete"}
+
+def refresh_google_token_for_user(user, session):
+    access_token, refresh_token, expiry = user.get_google_tokens()
+    refresh_threshold = datetime.timedelta(minutes=5)
+    now = datetime.utcnow()
+    if refresh_token and expiry and expiry < now + refresh_threshold:
+        logging.info(f"[Google Token Refresh] Attempting refresh for user {user.email}")
+        data = {
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token"
+        }
+        try:
+            resp = httpx.post(GOOGLE_TOKEN_URL, data=data, timeout=10.0)
+            logging.info(f"[Google Token Refresh] Response status: {resp.status_code}")
+            logging.info(f"[Google Token Refresh] Response body: {resp.text}")
+            if resp.status_code == 200:
+                tokens = resp.json()
+                new_access_token = tokens["access_token"]
+                expires_in = tokens.get("expires_in", 3600)
+                new_expiry = now + datetime.timedelta(seconds=expires_in)
+                user.set_google_tokens(new_access_token, refresh_token, new_expiry)
+                session.add(user)
+                session.commit()
+                logging.info(f"[Google Token Refresh] Token refreshed for user {user.email}. New expiry: {new_expiry}")
+            else:
+                logging.error(f"[Google Token Refresh] Failed for user {user.email}: {resp.text}")
+        except Exception as e:
+            logging.error(f"[Google Token Refresh] Exception for user {user.email}: {e}")
 
 @celery_app.task
-def summarize_transcript_task(transcript):
-    # Dummy: Summarize transcript
-    return f"Summary: {transcript[:30]}..."
+def refresh_all_google_tokens():
+    session = SessionLocal()
+    try:
+        users = session.query(User).filter(User.google_refresh_token_encrypted.isnot(None)).all()
+        for user in users:
+            refresh_google_token_for_user(user, session)
+    finally:
+        session.close()
+    return {"status": "google token refresh complete"}
+
+# @celery_app.task
+# def transcribe_audio_task(audio_path):
+#     # Dummy: Transcribe audio
+#     return f"Transcribed: {audio_path}"
+
+# @celery_app.task
+# def summarize_transcript_task(transcript):
+#     # Dummy: Summarize transcript
+#     return f"Summary: {transcript[:30]}..."
 
 @celery_app.task
 def sync_fireflies_meetings(user_email=None, api_key=None):
@@ -128,7 +135,7 @@ def sync_fireflies_meetings(user_email=None, api_key=None):
                     meeting_date = datetime.datetime.fromtimestamp(raw_date)
                 elif isinstance(raw_date, str):
                     try:
-                        meeting_date = datetime.datetime.fromisoformat(raw_date)
+                        meeting_date = datetime.fromisoformat(raw_date)
                     except Exception:
                         meeting_date = None
                 else:

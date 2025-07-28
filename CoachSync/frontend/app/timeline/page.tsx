@@ -227,7 +227,7 @@ export default function MeetingTimeline() {
                         <span className="text-sm text-gray-500">{formatDate(meeting.date)}</span>
                       </div>
                       <div className="text-sm text-gray-600 mb-2">
-                        Duration: {Math.floor(meeting.duration / 60)}m {meeting.duration % 60}s
+                        Duration: {meeting.duration} min
                       </div>
                       <div className="mb-3">
                         <strong>Client:</strong> {meeting.client_name}

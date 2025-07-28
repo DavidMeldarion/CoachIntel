@@ -308,7 +308,7 @@ async def get_calendar_events(user: User = Depends(verify_jwt_user)):
     refresh_threshold = timedelta(minutes=5)
     now = datetime.utcnow()
     if expiry and expiry < now + refresh_threshold:
-        logger.info(f"Google token expired or expiring soon for user {user.email}. Attempting refresh...")
+        logger.info(f"[TOKEN REFRESH] Google token expired or expiring soon for user {user.email}. Attempting refresh...")
         data = {
             "client_id": GOOGLE_CLIENT_ID,
             "client_secret": GOOGLE_CLIENT_SECRET,
@@ -317,16 +317,16 @@ async def get_calendar_events(user: User = Depends(verify_jwt_user)):
         }
         async with httpx.AsyncClient() as client:
             resp = await client.post(GOOGLE_TOKEN_URL, data=data)
-            logger.info(f"Google token refresh response status: {resp.status_code}")
-            logger.info(f"Google token refresh response body: {resp.text}")
+            logger.info(f"[TOKEN REFRESH]Google token refresh response status: {resp.status_code}")
+            logger.info(f"[TOKEN REFRESH]Google token refresh response body: {resp.text}")
             if resp.status_code != 200:
-                logger.error(f"Failed to refresh Google token for user {user.email}: {resp.text}")
-                raise HTTPException(status_code=401, detail=f"Failed to refresh Google token: {resp.text}")
+                logger.error(f"[TOKEN REFRESH]Failed to refresh Google token for user {user.email}: {resp.text}")
+                raise HTTPException(status_code=401, detail=f"[TOKEN REFRESH]Failed to refresh Google token: {resp.text}")
             tokens = resp.json()
         access_token = tokens["access_token"]
         expires_in = tokens.get("expires_in", 3600)
         expiry = now + timedelta(seconds=expires_in)
-        logger.info(f"Google token refreshed for user {user.email}. New expiry: {expiry}")
+        logger.info(f"[TOKEN REFRESH]Google token refreshed for user {user.email}. New expiry: {expiry}")
         user.set_google_tokens(access_token, refresh_token, expiry)
         async with AsyncSessionLocal() as session:
             session.add(user)
@@ -446,7 +446,7 @@ async def sync_external_meetings(source: str = Query(..., description="fireflies
     Persists meetings to the database via Celery task.
     Returns status and task ID.
     """
-    logger.info(f"[SYNC DEBUG] Sync requested for user: {user.email}, source: {source}")
+    # logger.info(f"[SYNC DEBUG] Sync requested for user: {user.email}, source: {source}")
     # Get user profile
     user_profile = await get_user_by_email(user.email)
     if not user_profile:
@@ -458,7 +458,7 @@ async def sync_external_meetings(source: str = Query(..., description="fireflies
             logger.warning(f"[SYNC DEBUG] No Fireflies API key for user: {user.email}")
             return {"error": "Fireflies API key not found"}
         task = sync_fireflies_meetings.delay(user.email, user_profile.fireflies_api_key)
-        logger.info(f"[SYNC DEBUG] Fireflies sync task triggered: {task.id}")
+        # logger.info(f"[SYNC DEBUG] Fireflies sync task triggered: {task.id}")
         return {"status": "sync started", "task_id": task.id, "source": source}
     elif source == "zoom":
         logger.error(f"[SYNC DEBUG] Zoom sync is not implemented.")
@@ -473,34 +473,18 @@ def get_sync_status(task_id: str):
     Return the status of a Celery sync task by task_id.
     Possible states: PENDING, STARTED, SUCCESS, FAILURE, etc.
     """
+    logger.info(f"[SYNC STATUS] Checking status for task ID: {task_id}")
     import time
     now = time.time()
-    logger.info(f"[SYNC STATUS] Poll timestamp: {now}")
     result = AsyncResult(task_id)
-    # Log raw Redis value for the task result key
-    try:
-        redis_backend = result.backend
-        redis_client = getattr(redis_backend, 'client', None)
-        if redis_client:
-            redis_key = redis_backend.get_key_for_task(task_id)
-            raw_value = redis_client.get(redis_key)
-            logger.info(f"[SYNC STATUS] Redis key: {redis_key}")
-            logger.info(f"[SYNC STATUS] Raw Redis value: {raw_value}")
-        else:
-            logger.warning("[SYNC STATUS] Could not access Redis client from Celery backend.")
-    except Exception as e:
-        logger.warning(f"[SYNC STATUS] Error reading raw Redis value: {e}")
-    logger.info(f"[SYNC STATUS] Checking task_id={task_id} status={result.status} ready={result.ready()} successful={result.successful()} result={result.result} type={type(result.result)}")
     response = {"task_id": task_id, "status": result.status, "ready": result.ready(), "successful": result.successful(), "timestamp": now}
     if result.status == "FAILURE":
         logger.error(f"[SYNC STATUS] Task failed: {result.result}")
         response["error"] = str(result.result)
     elif result.status == "SUCCESS":
-        logger.info(f"[SYNC STATUS] Task succeeded: {result.result}")
         if isinstance(result.result, str):
             try:
                 parsed = json.loads(result.result)
-                logger.info(f"[SYNC STATUS] Parsed string result: {parsed}")
                 if isinstance(parsed, dict):
                     response["summary"] = parsed.get("status") or parsed
                 else:

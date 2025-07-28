@@ -16,3 +16,4 @@ requests
 cryptography
 asgiref
 redis-cli
+openai

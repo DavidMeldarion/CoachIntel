@@ -43,7 +43,7 @@ export default function MeetingTranscriptPage({ params }: { params: { meetingId:
         <h2 className="text-2xl font-bold mb-4 text-blue-700">{meeting.title || "Meeting Transcript"}</h2>
         <div className="mb-2 text-gray-600">Date: {meeting.date}</div>
         <div className="mb-2 text-gray-600">Client: {meeting.client_name}</div>
-        <div className="mb-6 text-gray-600">Duration: {Math.floor(meeting.duration / 60)}m {meeting.duration % 60}s</div>
+        <div className="mb-6 text-gray-600">Duration: {meeting.duration} min</div>
         <h3 className="text-lg font-semibold mb-2">Full Transcript</h3>
         <div className="whitespace-pre-wrap text-gray-800 bg-gray-50 p-4 rounded border max-h-[500px] overflow-y-auto">
           {meeting.transcript?.full_text || "No transcript available."}
