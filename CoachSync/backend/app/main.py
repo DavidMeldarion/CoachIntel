@@ -468,20 +468,16 @@ async def sync_external_meetings(source: str = Query(..., description="fireflies
         return {"error": "Invalid source. Must be 'fireflies' or 'zoom'"}
 
 @app.get("/sync/status/{task_id}")
-def get_sync_status(task_id: str):
-    """
-    Return the status of a Celery sync task by task_id.
-    Possible states: PENDING, STARTED, SUCCESS, FAILURE, etc.
-    """
-    logger.info(f"[SYNC STATUS] Checking status for task ID: {task_id}")
-    logger.info(f"[SYNC STATUS] Using Redis URL: {REDIS_URL}")
-    
+def get_sync_status(task_id: str, request: Request):
+    # logger.info(f"[SYNC STATUS] Endpoint called for task ID: {task_id} from {request.client.host}:{request.client.port} at {time.time()}")
+    # logger.info(f"[SYNC STATUS] All headers: {dict(request.headers)}")
+    from .worker import celery_app  # Ensure using the same Celery app instance
     now = time.time()
     result = AsyncResult(task_id, app=celery_app)
-    logger.info(f"[SYNC STATUS] Result: status={result.status}, ready={result.ready()}, successful={result.successful()}, result={result.result}, task_name={getattr(result, 'task_name', None)}")
+    # logger.info(f"[SYNC STATUS] Result: status={result.status}, ready={result.ready()}, successful={result.successful()}, result={result.result}, task_name={getattr(result, 'task_name', None)}")
     response = {"task_id": task_id, "status": result.status, "ready": result.ready(), "successful": result.successful(), "timestamp": now, "task_name": getattr(result, 'task_name', None)}
     if result.status == "FAILURE":
-        logger.error(f"[SYNC STATUS] Task failed: {result.result}")
+        # logger.error(f"[SYNC STATUS] Task failed: {result.result}")
         response["error"] = str(result.result)
     elif result.status == "SUCCESS":
         if isinstance(result.result, str):
@@ -492,15 +488,19 @@ def get_sync_status(task_id: str):
                 else:
                     response["summary"] = parsed
             except Exception as e:
-                logger.warning(f"[SYNC STATUS] Could not parse string result: {e}")
+                # logger.warning(f"[SYNC STATUS] Could not parse string result: {e}")
                 response["summary"] = result.result
         elif isinstance(result.result, dict):
             response["summary"] = result.result.get("status") or result.result
         else:
             response["summary"] = result.result
     else:
-        logger.info(f"[SYNC STATUS] Task not complete: status={result.status}")
-    return response
+        # logger.info(f"[SYNC STATUS] Task not complete: status={result.status}")
+        pass
+    return JSONResponse(content=response, headers={
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache"
+    })
 
 @app.get("/test-fireflies")
 async def test_fireflies_connection(user: User = Depends(verify_jwt_user)):

@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
     const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://backend:8000";
     const backendUrl = `${API_BASE}/sync/external-meetings?source=${source}`;
     const cookie = request.headers.get("cookie");
-    console.log("[API DEBUG] Sync backend URL:", backendUrl);
+    // console.log("[API DEBUG] Sync backend URL:", backendUrl);
     const response = await fetch(backendUrl, {
       method: "POST",
       headers: {

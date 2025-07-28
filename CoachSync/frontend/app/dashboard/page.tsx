@@ -223,7 +223,7 @@ function Dashboard() {
         await new Promise(r => setTimeout(r, 2000)); // 2s delay between polls
         const statusRes = await fetch(`/api/sync/status/${data.task_id}?_=${Date.now()}_${Math.random()}`);
         const statusData = await statusRes.json();
-        console.log("[DASHBOARD SYNC] Polled status:", statusData);
+        // console.log("[DASHBOARD SYNC] Polled status:", statusData);
         status = statusData.status;
         pollCount++;
         if (status === "FAILURE") {

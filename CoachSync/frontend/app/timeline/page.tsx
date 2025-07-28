@@ -5,9 +5,9 @@ import { useEffect, useState } from "react";
 import { useSync } from "../../lib/syncContext";
 
 export default function MeetingTimeline() {
-  if (typeof window !== "undefined") {
-    console.log("[Timeline] Component mounted in browser");
-  }
+  // if (typeof window !== "undefined") {
+  //   console.log("[Timeline] Component mounted in browser");
+  // }
 
   const { lastSync } = useSync();
   const [meetings, setMeetings] = useState<any[]>([]);
@@ -28,18 +28,18 @@ export default function MeetingTimeline() {
     setError("");
     try {
       const url = `/api/meetings?ts=${Date.now()}`;
-      if (typeof window !== "undefined") {
-        console.log("[Timeline] Fetching meetings from:", url);
-      }
+      // if (typeof window !== "undefined") {
+      //   console.log("[Timeline] Fetching meetings from:", url);
+      // }
       const response = await fetch(url, { credentials: "include" });
-      if (typeof window !== "undefined") {
-        console.log("[Timeline] Raw response status:", response.status);
-      }
+      // if (typeof window !== "undefined") {
+      //   console.log("[Timeline] Raw response status:", response.status);
+      // }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
-      if (typeof window !== "undefined") {
-        console.log("[Timeline] Parsed response data:", data);
-      }
+      // if (typeof window !== "undefined") {
+      //   console.log("[Timeline] Parsed response data:", data);
+      // }
       // Normalize participants to always be an array of strings for display
       const normalizedMeetings = (data.meetings || []).map((m: any) => ({
         ...m,
