@@ -18,7 +18,7 @@ from celery.result import AsyncResult
 from .integrations import get_fireflies_meeting_details, test_fireflies_api_key
 from .models import User, create_or_update_user, get_user_by_email, Meeting, Transcript, AsyncSessionLocal
 from sqlalchemy import select
-from .worker import sync_fireflies_meetings, celery_app, REDIS_URL  # Import Celery task for Fireflies only
+from app.worker import sync_fireflies_meetings, celery_app, REDIS_URL  # Import Celery task for Fireflies only
 from .config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_TOKEN_URL, GOOGLE_CALENDAR_EVENTS_URL
 
 logger = logging.getLogger("coachsync")
@@ -477,9 +477,9 @@ def get_sync_status(task_id: str):
     logger.info(f"[SYNC STATUS] Using Redis URL: {REDIS_URL}")
     
     now = time.time()
-    result = AsyncResult(task_id)
-    logger.info(f"[SYNC STATUS] Result: status={result.status}, ready={result.ready()}, successful={result.successful()}, result={result.result}")
-    response = {"task_id": task_id, "status": result.status, "ready": result.ready(), "successful": result.successful(), "timestamp": now}
+    result = AsyncResult(task_id, app=celery_app)
+    logger.info(f"[SYNC STATUS] Result: status={result.status}, ready={result.ready()}, successful={result.successful()}, result={result.result}, task_name={getattr(result, 'task_name', None)}")
+    response = {"task_id": task_id, "status": result.status, "ready": result.ready(), "successful": result.successful(), "timestamp": now, "task_name": getattr(result, 'task_name', None)}
     if result.status == "FAILURE":
         logger.error(f"[SYNC STATUS] Task failed: {result.result}")
         response["error"] = str(result.result)
@@ -565,7 +565,7 @@ async def health():
     # Check Celery/Redis
     try:
         # Send a dummy task and check status
-        result = celery_app.send_task('worker.summarize_missing_transcripts')
+        result = celery_app.send_task('worker.sync_fireflies_meetings')
         _ = AsyncResult(result.id)
     except Exception as e:
         return {"ok": False, "celery": False, "error": str(e)}
@@ -579,6 +579,5 @@ async def trigger_summarize_missing_transcripts():
     Trigger the Celery task to summarize all missing transcripts.
     Returns the Celery task id.
     """
-    from .worker import celery_app
     result = celery_app.send_task('app.worker.summarize_missing_transcripts')
     return {"task_id": result.id, "status": "started"}
