@@ -17,3 +17,4 @@ cryptography
 asgiref
 redis-cli
 openai
+postmarker
