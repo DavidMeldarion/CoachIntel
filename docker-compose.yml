@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  coachintel-frontend:
+    build: ./frontend
+    command: npm run dev
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+    - CHOKIDAR_USEPOLLING=true
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules # Prevents host node_modules from overwriting container's
+    depends_on:
+      - coachintel-backend
+
+  coachintel-backend:
+    build: ./backend
+    command: /bin/sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+      - /app/__pycache__ # Prevents host __pycache__ from overwriting container's (optional)
+    depends_on:
+      - coachintel-db
+      - coachintel-redis
+  coachintel-worker:
+    build: ./backend
+    command: celery -A app.worker.celery_app worker --loglevel=debug
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+      - /app/__pycache__ # Prevents host __pycache__ from overwriting container's (optional)
+    depends_on:
+      - coachintel-backend
+      - coachintel-redis
+
+  coachintel-db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: coachintel
+    ports:
+      - "5434:5432"
+    volumes:
+      - coachintel-pgdata:/var/lib/postgresql/data
+
+  coachintel-redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - coachintel-redisdata:/data
+
+volumes:
+  coachintel-pgdata:
+  coachintel-redisdata:

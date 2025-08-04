@@ -1,0 +1,20 @@
+# requirements.txt for CoachIntel backend
+fastapi
+uvicorn
+celery
+redis
+python-dotenv
+sqlalchemy[asyncio]
+alembic
+boto3
+httpx
+psycopg2-binary
+asyncpg
+PyJWT
+python-multipart
+requests
+cryptography
+asgiref
+redis-cli
+openai
+postmarker
