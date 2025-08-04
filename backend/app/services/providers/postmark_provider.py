@@ -28,7 +28,7 @@ class PostmarkProvider(EmailService):
         try:
             self.logger.info(f"Sending email to {to_email} via Postmark...")
             self.client.emails.send(
-                From="info@coachintel.ai",  # Replace with your verified sender
+                From="Casey From CoachIntel <Casey@coachintel.ai>",
                 To=to_email,
                 Subject=subject,
                 HtmlBody=body
