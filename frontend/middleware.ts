@@ -4,7 +4,7 @@ import { jwtVerify } from 'jose';
 import { getUserProfile } from '../lib/userApi';
 
 // List of public routes that do not require authentication
-const PUBLIC_PATHS = ['/login', '/signup', '/_next', '/favicon.ico', '/api'];
+const PUBLIC_PATHS = ['/', '/login', '/signup', '/_next', '/favicon.ico', '/api'];
 
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey';
 

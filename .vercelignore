@@ -1,0 +1,16 @@
+# Vercel ignore file
+backend/
+.env
+.env.local
+.env.development
+.env.production
+docker-compose.yml
+Dockerfile
+README.md
+*.md
+.git/
+.github/
+node_modules/
+.next/
+out/
+dist/

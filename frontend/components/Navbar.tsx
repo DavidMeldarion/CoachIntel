@@ -52,7 +52,7 @@ export default function Navbar() {
     return (
       <nav className="w-full flex items-center justify-between px-8 py-4 bg-white shadow mb-8">
         <div className="flex items-center gap-8">
-          <Link href="/dashboard" className="text-xl font-bold text-blue-700 tracking-tight hover:text-blue-900 transition">CoachIntel</Link>
+          <Link href="/" className="text-xl font-bold text-blue-700 tracking-tight hover:text-blue-900 transition">CoachIntel</Link>
         </div>
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-700"></div>
       </nav>
@@ -62,7 +62,7 @@ export default function Navbar() {
   return (
     <nav className="w-full flex items-center justify-between px-8 py-4 bg-white shadow mb-8">
       <div className="flex items-center gap-8">
-        <Link href="/dashboard" className="text-xl font-bold text-blue-700 tracking-tight hover:text-blue-900 transition">CoachIntel</Link>
+        <Link href="/" className="text-xl font-bold text-blue-700 tracking-tight hover:text-blue-900 transition">CoachIntel</Link>
         {loggedIn && (
           <>
             <Link href="/dashboard" className="text-gray-700 font-medium hover:text-blue-700 transition">Dashboard</Link>
