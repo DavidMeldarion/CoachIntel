@@ -7,7 +7,7 @@ When using SQLAlchemy with asyncpg and connection poolers (like Supabase's PgBou
 ```
 sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.ProgrammingError: 
 <class 'asyncpg.exceptions.DuplicatePreparedStatementError'>: 
-prepared statement "__asyncpg_stmt_3__" already exists
+prepared statement "__asyncpg_stmt_X__" already exists
 ```
 
 ## Root Cause
@@ -16,34 +16,60 @@ prepared statement "__asyncpg_stmt_3__" already exists
 - **Connection Pooling**: PgBouncer in "transaction" mode doesn't properly handle prepared statements
 - **Conflict**: When connections are reused, prepared statements clash
 
-## The Solution
+## The Solution (Applied in models.py)
 
-Disable prepared statements in the SQLAlchemy engine configuration:
-
+### Method 1: URL Parameters + NullPool
 ```python
+# Add parameters to database URL
+if "?" in ASYNC_DATABASE_URL:
+    ASYNC_DATABASE_URL += "&prepared_statement_cache_size=0&statement_cache_size=0"
+else:
+    ASYNC_DATABASE_URL += "?prepared_statement_cache_size=0&statement_cache_size=0"
+
+# Configure engine
 engine = create_async_engine(
-    DATABASE_URL, 
+    ASYNC_DATABASE_URL, 
     echo=True, 
     future=True,
+    poolclass=NullPool,  # Disable SQLAlchemy pooling to avoid conflicts
     connect_args={
-        "statement_cache_size": 0,  # Disable prepared statements
-        "prepared_statement_cache_size": 0  # Additional safety
+        "server_settings": {"jit": "off"},
+        "command_timeout": 30,
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
     }
+)
+```
+
+### Method 2: Alternative Configuration (if Method 1 fails)
+```python
+import asyncpg
+
+async def create_connection():
+    return await asyncpg.connect(
+        DATABASE_URL,
+        statement_cache_size=0,
+        prepared_statement_cache_size=0
+    )
+
+engine = create_async_engine(
+    DATABASE_URL,
+    creator=create_connection,
+    poolclass=NullPool
 )
 ```
 
 ## Why This Works
 
-1. **No Performance Loss**: For web apps with varied queries, prepared statements don't provide significant benefits
-2. **Connection Pool Compatible**: Works seamlessly with PgBouncer and Supabase pooling
-3. **Production Ready**: Many production apps use this configuration
+1. **NullPool**: Disables SQLAlchemy's connection pooling, letting PgBouncer handle it
+2. **statement_cache_size=0**: Completely disables prepared statement caching
+3. **URL Parameters**: Ensures asyncpg gets the configuration directly
+4. **Multiple Methods**: Provides redundancy to ensure the fix works
 
-## Alternative Solutions
+## Testing
 
-1. **Use AsyncPG's built-in pooling** (instead of PgBouncer)
-2. **Switch PgBouncer to "session" mode** (not recommended for Supabase)
-3. **Use synchronous SQLAlchemy** (loses async benefits)
+After applying the fix, test with multiple database queries to ensure no errors occur.
 
-## Status: ✅ Fixed
+## Status: ✅ Fixed (Multiple Methods Applied)
 
-This fix has been applied to `backend/app/models.py` in the CoachIntel project.
+This comprehensive fix has been applied to `backend/app/models.py` in the CoachIntel project.

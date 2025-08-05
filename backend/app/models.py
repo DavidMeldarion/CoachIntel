@@ -3,9 +3,11 @@ from sqlalchemy import Column, Integer, String, create_engine, select, ForeignKe
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.pool import NullPool
 import os
 from sqlalchemy.dialects.postgresql import JSON
 from cryptography.fernet import Fernet
+import asyncpg
 
 Base = declarative_base()
 
@@ -109,16 +111,27 @@ if not ASYNC_DATABASE_URL:
 if ASYNC_DATABASE_URL.startswith("postgresql://"):
     ASYNC_DATABASE_URL = ASYNC_DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
+# Add asyncpg-specific parameters to disable prepared statements for PgBouncer compatibility
+if "?" in ASYNC_DATABASE_URL:
+    ASYNC_DATABASE_URL += "&prepared_statement_cache_size=0&statement_cache_size=0"
+else:
+    ASYNC_DATABASE_URL += "?prepared_statement_cache_size=0&statement_cache_size=0"
+
 print(f"Using async database URL: {ASYNC_DATABASE_URL.split('@')[0]}@[REDACTED]")
 
-# Configure engine with asyncpg settings for connection pooling compatibility
+# Configure engine for connection pooling compatibility
 engine = create_async_engine(
     ASYNC_DATABASE_URL, 
     echo=True, 
     future=True,
+    poolclass=NullPool,  # Disable SQLAlchemy connection pooling to avoid conflicts
     connect_args={
-        "statement_cache_size": 0,  # Disable prepared statements for PgBouncer compatibility
-        "prepared_statement_cache_size": 0  # Additional safety for some asyncpg versions
+        "server_settings": {
+            "jit": "off",  # Disable JIT for better compatibility
+        },
+        "command_timeout": 30,  # 30 second timeout for commands
+        "statement_cache_size": 0,  # Disable prepared statements
+        "prepared_statement_cache_size": 0,  # Additional safety
     }
 )
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
