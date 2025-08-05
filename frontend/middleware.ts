@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
-import { getUserProfile } from '../lib/userApi';
 
 // List of public routes that do not require authentication
 const PUBLIC_PATHS = ['/', '/login', '/signup', '/_next', '/favicon.ico', '/api'];
