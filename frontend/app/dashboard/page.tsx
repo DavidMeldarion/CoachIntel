@@ -4,8 +4,7 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useUser } from "../../lib/userContext";
 import { useSync } from "../../lib/syncContext";
-
-const API_BASE = process.env.NEXT_PUBLIC_BROWSER_API_URL || "http://localhost:8000";
+import { getApiUrl } from "../../lib/apiUrl";
 
 function Dashboard() {
   const { user, loading: userLoading } = useUser();

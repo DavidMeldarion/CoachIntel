@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "../../lib/userContext";
+import { getApiUrl } from "../../lib/apiUrl";
 
 export default function CompleteProfile() {
   const router = useRouter();
@@ -61,7 +62,7 @@ export default function CompleteProfile() {
 
     try {
       const res = await fetch(
-        process.env.NEXT_PUBLIC_BROWSER_API_URL + "/user",
+        getApiUrl("/user"),
         {
           method: "PUT",
           headers: {

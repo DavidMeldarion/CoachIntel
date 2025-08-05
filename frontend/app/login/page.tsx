@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect, Suspense } from "react";
 import axios from "axios";
+import { getApiUrl } from "../../lib/apiUrl";
 
 function setUserCookie(token: string) {
   document.cookie = `user=${token}; path=/; max-age=604800; samesite=lax`;
@@ -11,8 +12,7 @@ function setUserCookie(token: string) {
 async function handleGoogleLogin(router: any, setError: any) {
   try {
     // Redirect to backend Google OAuth endpoint (no JWT required)
-    const apiUrl = process.env.NEXT_PUBLIC_BROWSER_API_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    window.location.href = `${apiUrl}/auth/google?intent=login`;
+    window.location.href = getApiUrl("/auth/google?intent=login");
   } catch (err) {
     setError("Google login failed");
   }
@@ -55,7 +55,7 @@ function LoginForm() {
     setLoading(true);
     try {
       const res = await axios.post(
-        process.env.NEXT_PUBLIC_BROWSER_API_URL + "/login",
+        getApiUrl("/login"),
         { email, password },
         { withCredentials: true }
       );

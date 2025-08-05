@@ -3,6 +3,7 @@ import { useState } from "react";
 import { upsertUserProfile } from "../../lib/userApi";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { getApiUrl } from "../../lib/apiUrl";
 
 export default function Signup() {
   const [email, setEmail] = useState("");
@@ -20,7 +21,7 @@ export default function Signup() {
     setLoading(true);
     try {
       // Check if user already exists
-      const res = await fetch(`${process.env.NEXT_PUBLIC_BROWSER_API_URL || 'http://localhost:8000'}/user/${encodeURIComponent(email)}`);
+      const res = await fetch(getApiUrl(`/user/${encodeURIComponent(email)}`));
       if (res.ok) {
         setError("Account already exists. Please log in.");
         setTimeout(() => router.push("/login"), 1500);
@@ -68,7 +69,7 @@ export default function Signup() {
         <button
           type="button"
           className="flex items-center justify-center gap-2 border border-gray-300 bg-white text-gray-700 font-medium rounded py-2 w-full hover:bg-gray-100 transition"
-          onClick={() => window.location.href = (process.env.NEXT_PUBLIC_BROWSER_API_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000") + "/auth/google?intent=signup"}
+          onClick={() => window.location.href = getApiUrl("/auth/google?intent=signup")}
         >
           <svg
             width="20"

@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useUser, User } from "../../lib/userContext";
+import { getApiUrl } from "../../lib/apiUrl";
 
 // Use the same type as context for full type safety
 export type UserProfile = {
@@ -70,7 +71,7 @@ export default function Profile() {
     setSuccess("");
     try {
       const res = await fetch(
-        process.env.NEXT_PUBLIC_BROWSER_API_URL + "/user",
+        getApiUrl("/user"),
         {
           method: "PUT",
           headers: {
