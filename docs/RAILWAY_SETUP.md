@@ -49,18 +49,18 @@ JWT_SECRET=your-secure-jwt-secret-for-production
 ```
 GOOGLE_CLIENT_ID=your-google-client-id
 GOOGLE_CLIENT_SECRET=your-google-client-secret
-GOOGLE_REDIRECT_URI=https://your-railway-app.railway.app/auth/google/callback
+GOOGLE_REDIRECT_URI=https://api.coachintel.ai/auth/google/callback
+```
+
+### Frontend URL (IMPORTANT: Update this!)
+```
+FRONTEND_URL=https://coachintel.ai
 ```
 
 ### Email
 ```
 EMAIL_PROVIDER=postmark
 POSTMARK_API_KEY=your-postmark-api-key
-```
-
-### Frontend URL (will be updated with Vercel URL)
-```
-FRONTEND_URL=https://your-vercel-app.vercel.app
 ```
 
 ## Step 4: Custom Start Command

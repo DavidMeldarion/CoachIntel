@@ -21,6 +21,9 @@ from sqlalchemy import select
 from app.worker import sync_fireflies_meetings, celery_app, REDIS_URL  # Import Celery task for Fireflies only
 from .config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_TOKEN_URL, GOOGLE_CALENDAR_EVENTS_URL
 
+# Frontend URL configuration
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
 logger = logging.getLogger("coachintel")
 logger.setLevel(logging.INFO)
 if not logger.hasHandlers():
@@ -32,7 +35,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", FRONTEND_URL],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
     allow_headers=["*"],
@@ -267,7 +270,7 @@ async def google_oauth_callback(request: Request, code: str, state: str = None):
     last_name = userinfo.get("family_name", "")
     if not email:
         print("[OAuth Callback] No email found in Google userinfo.")
-        return RedirectResponse("http://localhost:3000/login?error=no_email")
+        return RedirectResponse(f"{FRONTEND_URL}/login?error=no_email")
     # Find or create user
     user = await get_user_by_email(email)
     if not user:
@@ -288,7 +291,7 @@ async def google_oauth_callback(request: Request, code: str, state: str = None):
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode = {"sub": email, "exp": expire}
     token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    response = RedirectResponse("http://localhost:3000/dashboard")
+    response = RedirectResponse(f"{FRONTEND_URL}/dashboard")
     response.set_cookie(
         key="user",
         value=token,
