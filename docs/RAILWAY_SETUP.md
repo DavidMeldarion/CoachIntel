@@ -97,7 +97,11 @@ alembic upgrade head
 4. **AsyncPG Driver Error**: "The asyncio extension requires an async driver to be used"
    - **Solution**: Ensure `ASYNC_DATABASE_URL` starts with `postgresql+asyncpg://`
    - **Check**: `asyncpg` is in `requirements.txt` (already included)
-5. **Database Connection**: Verify DATABASE_URL format
+5. **Prepared Statement Error**: "prepared statement already exists" or "pgbouncer with pool_mode"
+   - **Solution**: Disabled prepared statements in `models.py` (already fixed)
+   - **Cause**: PgBouncer connection pooling conflicts with prepared statements
+   - **Technical**: Added `statement_cache_size: 0` to engine configuration
+6. **Database Connection**: Verify DATABASE_URL format
 6. **CORS Issues**: Make sure your frontend domain is allowed
 
 ### Port Binding Error Fix:

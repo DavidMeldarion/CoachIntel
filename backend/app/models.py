@@ -111,7 +111,16 @@ if ASYNC_DATABASE_URL.startswith("postgresql://"):
 
 print(f"Using async database URL: {ASYNC_DATABASE_URL.split('@')[0]}@[REDACTED]")
 
-engine = create_async_engine(ASYNC_DATABASE_URL, echo=True, future=True)
+# Configure engine with asyncpg settings for connection pooling compatibility
+engine = create_async_engine(
+    ASYNC_DATABASE_URL, 
+    echo=True, 
+    future=True,
+    connect_args={
+        "statement_cache_size": 0,  # Disable prepared statements for PgBouncer compatibility
+        "prepared_statement_cache_size": 0  # Additional safety for some asyncpg versions
+    }
+)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 # For Alembic migrations (sync engine)
