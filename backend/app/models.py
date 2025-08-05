@@ -92,9 +92,25 @@ class Transcript(Base):
     meeting = relationship("Meeting", back_populates="transcript")
 
 # Async engine for FastAPI app
-ASYNC_DATABASE_URL = os.getenv("ASYNC_DATABASE_URL") or os.getenv("DATABASE_URL")
-if not ASYNC_DATABASE_URL:
+ASYNC_DATABASE_URL = os.getenv("ASYNC_DATABASE_URL")
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not ASYNC_DATABASE_URL and not DATABASE_URL:
     raise RuntimeError("DATABASE_URL or ASYNC_DATABASE_URL environment variable is not set")
+
+# If ASYNC_DATABASE_URL is not set, convert DATABASE_URL to async format
+if not ASYNC_DATABASE_URL:
+    if DATABASE_URL.startswith("postgresql://"):
+        ASYNC_DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+    else:
+        ASYNC_DATABASE_URL = DATABASE_URL
+
+# Ensure async URL uses asyncpg driver
+if ASYNC_DATABASE_URL.startswith("postgresql://"):
+    ASYNC_DATABASE_URL = ASYNC_DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+print(f"Using async database URL: {ASYNC_DATABASE_URL.split('@')[0]}@[REDACTED]")
+
 engine = create_async_engine(ASYNC_DATABASE_URL, echo=True, future=True)
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 

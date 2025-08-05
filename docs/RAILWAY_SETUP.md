@@ -17,9 +17,14 @@ Add these environment variables in Railway dashboard:
 
 ### Database (will be updated with Supabase URL)
 ```
-DATABASE_URL=postgresql://username:password@your-supabase-host:5432/postgres
-ASYNC_DATABASE_URL=postgresql+asyncpg://username:password@your-supabase-host:5432/postgres
-SYNC_DATABASE_URL=postgresql://username:password@your-supabase-host:5432/postgres
+# Regular connection for migrations and sync operations
+DATABASE_URL=postgresql://postgres:your-password@db.your-project-ref.supabase.co:5432/postgres
+
+# Async connection for FastAPI (MUST use postgresql+asyncpg://)
+ASYNC_DATABASE_URL=postgresql+asyncpg://postgres:your-password@db.your-project-ref.supabase.co:5432/postgres
+
+# Sync connection for Alembic migrations
+SYNC_DATABASE_URL=postgresql://postgres:your-password@db.your-project-ref.supabase.co:5432/postgres
 ```
 
 ### Redis (will be updated with Upstash URL)
@@ -83,8 +88,11 @@ alembic upgrade head
 2. **Port Binding Error**: "Invalid value for '--port': '$PORT' is not a valid integer"
    - **Solution**: Use the `start.py` script (already included)
    - **Alternative**: Remove `railway.json` and let Railway auto-detect using `Procfile`
-3. **Database Connection**: Verify DATABASE_URL format
-4. **CORS Issues**: Make sure your frontend domain is allowed
+3. **AsyncPG Driver Error**: "The asyncio extension requires an async driver to be used"
+   - **Solution**: Ensure `ASYNC_DATABASE_URL` starts with `postgresql+asyncpg://`
+   - **Check**: `asyncpg` is in `requirements.txt` (already included)
+4. **Database Connection**: Verify DATABASE_URL format
+5. **CORS Issues**: Make sure your frontend domain is allowed
 
 ### Port Binding Error Fix:
 If you see the PORT error, try these solutions in order:
