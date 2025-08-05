@@ -15,16 +15,19 @@
 ## Step 3: Configure Environment Variables
 Add these environment variables in Railway dashboard:
 
-### Database (will be updated with Supabase URL)
+### Database (use Supabase Connection Pooler URLs)
 ```
+# IMPORTANT: Use connection pooler URLs from Supabase (port 6543, not 5432)
+# Get these from: Supabase Dashboard → Settings → Database → Connection Pooling
+
 # Regular connection for migrations and sync operations
-DATABASE_URL=postgresql://postgres:your-password@db.your-project-ref.supabase.co:5432/postgres
+DATABASE_URL=postgresql://postgres.your-project-ref:your-password@region.pooler.supabase.com:6543/postgres
 
 # Async connection for FastAPI (MUST use postgresql+asyncpg://)
-ASYNC_DATABASE_URL=postgresql+asyncpg://postgres:your-password@db.your-project-ref.supabase.co:5432/postgres
+ASYNC_DATABASE_URL=postgresql+asyncpg://postgres.your-project-ref:your-password@region.pooler.supabase.com:6543/postgres
 
 # Sync connection for Alembic migrations
-SYNC_DATABASE_URL=postgresql://postgres:your-password@db.your-project-ref.supabase.co:5432/postgres
+SYNC_DATABASE_URL=postgresql://postgres.your-project-ref:your-password@region.pooler.supabase.com:6543/postgres
 ```
 
 ### Redis (will be updated with Upstash URL)
@@ -88,11 +91,14 @@ alembic upgrade head
 2. **Port Binding Error**: "Invalid value for '--port': '$PORT' is not a valid integer"
    - **Solution**: Use the `start.py` script (already included)
    - **Alternative**: Remove `railway.json` and let Railway auto-detect using `Procfile`
-3. **AsyncPG Driver Error**: "The asyncio extension requires an async driver to be used"
+3. **Database Connection Error**: "Network unreachable" or "Connection refused"
+   - **Solution**: Use Supabase connection pooler URLs (port 6543)
+   - **Check**: URLs should use `region.pooler.supabase.com`, not `db.project.supabase.co`
+4. **AsyncPG Driver Error**: "The asyncio extension requires an async driver to be used"
    - **Solution**: Ensure `ASYNC_DATABASE_URL` starts with `postgresql+asyncpg://`
    - **Check**: `asyncpg` is in `requirements.txt` (already included)
-4. **Database Connection**: Verify DATABASE_URL format
-5. **CORS Issues**: Make sure your frontend domain is allowed
+5. **Database Connection**: Verify DATABASE_URL format
+6. **CORS Issues**: Make sure your frontend domain is allowed
 
 ### Port Binding Error Fix:
 If you see the PORT error, try these solutions in order:

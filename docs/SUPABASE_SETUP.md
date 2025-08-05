@@ -25,11 +25,12 @@ postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT_REF.supabase.co:5432/postgre
 postgresql+asyncpg://postgres:YOUR_PASSWORD@db.YOUR_PROJECT_REF.supabase.co:5432/postgres
 ```
 
-## Step 4: Configure Database Access
+## Step 4: Configure Database Access (IMPORTANT)
 1. Go to Settings > Database
 2. Scroll to "Connection Pooling"
-3. Enable connection pooling for better performance
-4. Note the pooler connection string
+3. **ENABLE connection pooling** - This is essential for production
+4. **Copy the pooler connection string** (this is what you'll use in production)
+5. The pooler URL format: `postgresql://postgres.PROJECT_REF:PASSWORD@REGION.pooler.supabase.com:6543/postgres`
 
 ## Step 5: Security Configuration
 1. Go to Authentication > Settings
@@ -37,18 +38,26 @@ postgresql+asyncpg://postgres:YOUR_PASSWORD@db.YOUR_PROJECT_REF.supabase.co:5432
 3. Set redirect URLs for OAuth
 
 ## Step 6: Environment Variables
-Use these in Railway and Vercel:
+**IMPORTANT: Use Connection Pooler URLs for Production**
 
 ```bash
+# Use POOLER URLs (from Connection Pooling section in Supabase)
+# Format: postgresql://postgres.PROJECT_REF:PASSWORD@REGION.pooler.supabase.com:6543/postgres
+
 # Direct connection (for migrations and admin tasks)
-DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT_REF.supabase.co:5432/postgres
+DATABASE_URL=postgresql://postgres.YOUR_PROJECT_REF:YOUR_PASSWORD@REGION.pooler.supabase.com:6543/postgres
 
 # Async connection (for FastAPI app)
-ASYNC_DATABASE_URL=postgresql+asyncpg://postgres:YOUR_PASSWORD@db.YOUR_PROJECT_REF.supabase.co:5432/postgres
+ASYNC_DATABASE_URL=postgresql+asyncpg://postgres.YOUR_PROJECT_REF:YOUR_PASSWORD@REGION.pooler.supabase.com:6543/postgres
 
 # Sync connection (for Alembic migrations)
-SYNC_DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@db.YOUR_PROJECT_REF.supabase.co:5432/postgres
+SYNC_DATABASE_URL=postgresql://postgres.YOUR_PROJECT_REF:YOUR_PASSWORD@REGION.pooler.supabase.com:6543/postgres
 ```
+
+**Note**: 
+- Use **port 6543** for pooler connections (not 5432)
+- The hostname format is different: `REGION.pooler.supabase.com`
+- This prevents "Network unreachable" errors on Railway and other hosting platforms
 
 ## Step 7: Run Database Migrations
 After Railway deployment, run migrations:

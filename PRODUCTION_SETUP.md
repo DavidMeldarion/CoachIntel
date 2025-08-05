@@ -43,10 +43,11 @@
 Add these in Railway dashboard → Variables:
 
 ```bash
-# Database (replace with your Supabase details)
-DATABASE_URL=postgresql://postgres:YOUR_SUPABASE_PASSWORD@db.YOUR_PROJECT_REF.supabase.co:5432/postgres
-ASYNC_DATABASE_URL=postgresql+asyncpg://postgres:YOUR_SUPABASE_PASSWORD@db.YOUR_PROJECT_REF.supabase.co:5432/postgres
-SYNC_DATABASE_URL=postgresql://postgres:YOUR_SUPABASE_PASSWORD@db.YOUR_PROJECT_REF.supabase.co:5432/postgres
+# Database (replace with your Supabase CONNECTION POOLER details - IMPORTANT!)
+# Get these from Supabase Dashboard → Settings → Database → Connection Pooling
+DATABASE_URL=postgresql://postgres.YOUR_PROJECT_REF:YOUR_PASSWORD@REGION.pooler.supabase.com:6543/postgres
+ASYNC_DATABASE_URL=postgresql+asyncpg://postgres.YOUR_PROJECT_REF:YOUR_PASSWORD@REGION.pooler.supabase.com:6543/postgres
+SYNC_DATABASE_URL=postgresql://postgres.YOUR_PROJECT_REF:YOUR_PASSWORD@REGION.pooler.supabase.com:6543/postgres
 
 # Redis (replace with your Upstash details)
 CELERY_BROKER_URL=redis://default:YOUR_REDIS_PASSWORD@your-endpoint.upstash.io:6379
