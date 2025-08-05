@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import axios from "axios";
 
 function setUserCookie(token: string) {
@@ -23,13 +23,14 @@ function isLoggedIn() {
   return document.cookie.includes('user=');
 }
 
-export default function Login() {
+function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  
   useEffect(() => {
     // Redirect logged-in users to dashboard
     if (isLoggedIn()) {
@@ -143,5 +144,20 @@ export default function Login() {
         </Link>
       </form>
     </main>
+  );
+}
+
+export default function Login() {
+  return (
+    <Suspense fallback={
+      <main className="flex flex-col items-center justify-center min-h-screen p-8 bg-gray-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-700 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </main>
+    }>
+      <LoginForm />
+    </Suspense>
   );
 }
