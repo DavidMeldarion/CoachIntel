@@ -80,9 +80,37 @@ alembic upgrade head
 
 ### Common Issues:
 1. **Build Failures**: Check that `requirements.txt` is in the backend folder
-2. **Port Binding**: Ensure your app binds to `0.0.0.0:$PORT`
+2. **Port Binding Error**: "Invalid value for '--port': '$PORT' is not a valid integer"
+   - **Solution**: Use the `start.py` script (already included)
+   - **Alternative**: Remove `railway.json` and let Railway auto-detect using `Procfile`
 3. **Database Connection**: Verify DATABASE_URL format
 4. **CORS Issues**: Make sure your frontend domain is allowed
+
+### Port Binding Error Fix:
+If you see the PORT error, try these solutions in order:
+
+**Option 1: Use start.py script (Recommended)**
+```bash
+# This should work with the current setup
+# The start.py script handles PORT properly
+```
+
+**Option 2: Manual Railway Configuration**
+1. Go to Railway dashboard → Your service → Settings
+2. Under "Deploy", set custom start command:
+   ```
+   python start.py
+   ```
+
+**Option 3: Remove railway.json**
+1. Delete `railway.json` from your repository
+2. Let Railway use the `Procfile` instead
+3. Redeploy
+
+**Option 4: Add PORT environment variable manually**
+1. Go to Railway dashboard → Variables
+2. Add: `PORT=8000`
+3. Redeploy
 
 ### Useful Railway CLI Commands:
 ```bash
