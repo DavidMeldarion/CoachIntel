@@ -5,6 +5,14 @@ const nextConfig = {
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
     NEXT_PUBLIC_BROWSER_API_URL: process.env.NEXT_PUBLIC_BROWSER_API_URL,
   },
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: `${process.env.RAILWAY_API_URL || 'https://pqy11fu7.up.railway.app'}/:path*`,
+      },
+    ];
+  },
   async headers() {
     return [
       {
