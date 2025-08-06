@@ -27,32 +27,24 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     let didFinish = false;
     try {
-      const res = await fetch(getApiUrl("/session"), { credentials: "include" });
-      const text = await res.text();
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch (err) {
-        // console.error("UserProvider: Failed to parse /api/session response", text);
+      const res = await fetch(getApiUrl("/me"), { credentials: "include" });
+      if (!res.ok) {
         setUser(null);
         didFinish = true;
         return;
       }
-    //   console.debug("UserProvider: /api/session response", data);
-      if (data.loggedIn && data.user) {
-        setUser({
-          email: data.user.email,
-          name: data.user.name || data.user.first_name || "User",
-          first_name: data.user.first_name,
-          last_name: data.user.last_name,
-          fireflies_api_key: data.user.fireflies_api_key,
-          zoom_jwt: data.user.zoom_jwt,
-          phone: data.user.phone,
-          address: data.user.address,
-        });
-      } else {
-        setUser(null);
-      }
+      const user = await res.json();
+      // console.debug("UserProvider: /me response", user);
+      setUser({
+        email: user.email,
+        name: user.name || `${user.first_name} ${user.last_name}`.trim() || "User",
+        first_name: user.first_name,
+        last_name: user.last_name,
+        fireflies_api_key: user.fireflies_api_key,
+        zoom_jwt: user.zoom_jwt,
+        phone: user.phone,
+        address: user.address,
+      });
       didFinish = true;
     } catch (err) {
       console.error("UserProvider: Error fetching user", err);

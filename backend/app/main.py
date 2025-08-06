@@ -148,19 +148,6 @@ def root():
 #     # Dummy: Trigger summarization
 #     return {"status": "summarization started"}
 
-@app.get("/session")
-async def get_session(user: User = Depends(verify_jwt_user)):
-    """Get current user session information"""
-    return {
-        "user": {
-            "email": user.email,
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "name": f"{user.first_name} {user.last_name}".strip()
-        },
-        "authenticated": True
-    }
-
 @app.get("/external-meetings/{source}/{meeting_id}")
 async def get_meeting_details(
     source: str,
