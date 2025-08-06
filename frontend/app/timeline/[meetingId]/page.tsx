@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { getApiUrl } from "../../../lib/apiUrl";
 
 export default function MeetingTranscriptPage({ params }: { params: { meetingId: string } }) {
   const meetingId = params.meetingId;
@@ -16,7 +17,7 @@ export default function MeetingTranscriptPage({ params }: { params: { meetingId:
       setLoading(true);
       setError("");
       try {
-        const res = await fetch(`/api/meetings/${encodeURIComponent(meetingId)}`);
+        const res = await fetch(getApiUrl(`/meetings/${encodeURIComponent(meetingId)}`));
         if (!res.ok) throw new Error("Failed to fetch meeting");
         const data = await res.json();
         setMeeting(data);
@@ -33,7 +34,7 @@ export default function MeetingTranscriptPage({ params }: { params: { meetingId:
     setSummarizeLoading(true);
     setSummarizeResult(null);
     try {
-      const res = await fetch("/api/summarize-missing-transcripts", { method: "POST" });
+      const res = await fetch(getApiUrl("/summarize-missing-transcripts"), { method: "POST" });
       const data = await res.json();
       if (res.ok) {
         setSummarizeResult(`Task started: ${data.task_id}`);

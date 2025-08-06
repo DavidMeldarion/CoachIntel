@@ -1,22 +1,27 @@
 // Utility function to properly join API base URL with endpoint paths
 export function getApiUrl(endpoint: string = ''): string {
-  // If we're using Vercel rewrites, use relative paths
+  // Check if we have a direct API URL configured (Railway deployment)
+  const directApiUrl = process.env.NEXT_PUBLIC_BROWSER_API_URL || process.env.NEXT_PUBLIC_API_URL;
+  
+  // If we have a direct API URL, use it (Railway approach)
+  if (directApiUrl) {
+    // Remove trailing slash from base URL
+    const cleanBaseUrl = directApiUrl.replace(/\/+$/, '');
+    
+    // Ensure endpoint starts with exactly one slash
+    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    
+    return `${cleanBaseUrl}${cleanEndpoint}`;
+  }
+  
+  // Fallback to Vercel rewrites approach if no direct API URL
   if (process.env.NODE_ENV === 'production' && process.env.VERCEL) {
-    // Remove leading slash for relative paths
+    // Remove leading slash for relative paths and ensure proper concatenation
     const cleanEndpoint = endpoint.startsWith('/') ? endpoint.substring(1) : endpoint;
     return `/api/${cleanEndpoint}`;
   }
   
-  // For development or direct Railway access
-  const baseUrl = process.env.NEXT_PUBLIC_BROWSER_API_URL || 
-                  process.env.NEXT_PUBLIC_API_URL || 
-                  "http://localhost:8000";
-  
-  // Remove trailing slash from base URL
-  const cleanBaseUrl = baseUrl.replace(/\/+$/, '');
-  
-  // Ensure endpoint starts with a slash
+  // Development fallback
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  
-  return `${cleanBaseUrl}${cleanEndpoint}`;
+  return `http://localhost:8000${cleanEndpoint}`;
 }

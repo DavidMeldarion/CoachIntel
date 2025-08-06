@@ -24,7 +24,7 @@ function Dashboard() {
       setError("");
       try {
         // Fetch meetings
-        const meetingsRes = await fetch("/api/meetings", { credentials: "include" });
+        const meetingsRes = await fetch(getApiUrl("/meetings"), { credentials: "include" });
         if (!meetingsRes.ok) throw new Error("Failed to fetch meetings");
         const meetingsData = await meetingsRes.json();
         const meetings = meetingsData.meetings || [];
@@ -32,10 +32,10 @@ function Dashboard() {
         // Fetch Google Calendar events
         let calendarEvents: any[] = [];
         try {
-          const calRes = await fetch("/api/calendar/events", { credentials: "include" });
+          const calRes = await fetch(getApiUrl("/calendar/events"), { credentials: "include" });
           if (calRes.status === 401) {
             console.log("Logging out for 401")
-            await fetch('/api/logout', { method: 'POST' });
+            await fetch(getApiUrl('/logout'), { method: 'POST' });
             localStorage.clear();
             sessionStorage.clear();
             window.location.href = "/login";
@@ -112,9 +112,9 @@ function Dashboard() {
     setSyncing(true);
     setSyncError("");
     try {
-      const res = await fetch("/api/calendar/events", { credentials: "include" });
+      const res = await fetch(getApiUrl("/calendar/events"), { credentials: "include" });
       if (res.status === 401) {
-        await fetch('/api/logout', { method: 'POST' });
+                await fetch(getApiUrl('/logout'), { method: 'POST' });
         localStorage.clear();
         sessionStorage.clear();
         window.location.href = "/login";
@@ -155,7 +155,7 @@ function Dashboard() {
   async function refetchMeetings() {
     setLoading(true);
     try {
-      const meetingsRes = await fetch("/api/meetings", { credentials: "include" });
+      const meetingsRes = await fetch(getApiUrl("/meetings"), { credentials: "include" });
       const meetingsData = await meetingsRes.json();
       const meetings = meetingsData.meetings || [];
       // Recent activity: last 5 meetings (by date desc)
@@ -196,7 +196,7 @@ function Dashboard() {
     setSyncError("");
     try {
       // Start sync and get task_id
-      const res = await fetch("/api/external-meetings", {
+      const res = await fetch(getApiUrl("/external-meetings"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -220,7 +220,7 @@ function Dashboard() {
       let pollCount = 0;
       while (status !== "SUCCESS" && status !== "FAILURE" && pollCount < 30) {
         await new Promise(r => setTimeout(r, 2000)); // 2s delay between polls
-        const statusRes = await fetch(`/api/sync/status/${data.task_id}?_=${Date.now()}_${Math.random()}`);
+        const statusRes = await fetch(getApiUrl(`/sync/status/${data.task_id}?_=${Date.now()}_${Math.random()}`));
         const statusData = await statusRes.json();
         // console.log("[DASHBOARD SYNC] Polled status:", statusData);
         status = statusData.status;

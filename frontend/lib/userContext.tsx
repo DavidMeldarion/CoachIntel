@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { getApiUrl } from "./apiUrl";
 
 export type User = {
   email: string;
@@ -26,7 +27,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     let didFinish = false;
     try {
-      const res = await fetch("/api/session", { credentials: "include" });
+      const res = await fetch(getApiUrl("/session"), { credentials: "include" });
       const text = await res.text();
       let data;
       try {
@@ -73,9 +74,9 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     if (!user) return;
     const interval = setInterval(async () => {
       try {
-        const res = await fetch("/api/calendar/events", { credentials: "include" });
+        const res = await fetch(getApiUrl("/calendar/events"), { credentials: "include" });
         if (res.status === 401) {
-          await fetch('/api/logout', { method: 'POST' });
+          await fetch(getApiUrl('/logout'), { method: 'POST' });
           localStorage.clear();
           sessionStorage.clear();
           router.replace("/login");
