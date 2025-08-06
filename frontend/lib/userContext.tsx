@@ -24,6 +24,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const fetchUser = async () => {
     console.log("UserProvider: fetchUser called");
+    console.log("UserProvider: document.cookie =", document.cookie);
     setLoading(true);
     let didFinish = false;
     try {
