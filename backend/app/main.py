@@ -351,21 +351,17 @@ async def login(request: LoginRequest):
         to_encode = {"sub": request.email, "exp": expire, "userId": user.email, "email": request.email}
         token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
         
-        # Create response with both JSON data and cookie
-        response = JSONResponse({"token": token, "user": {"email": request.email, "id": user.email}})
-        
-        # Cookie settings
-        cookie_settings = {
-            "httponly": True,
-            "max_age": 60*60*24*7,  # 7 days
-            "samesite": "lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
-            "secure": True if os.getenv("RAILWAY_ENVIRONMENT") else False,
-            "path": "/"
-        }
-        
-        # Set both old "user" cookie and new "session" cookie for compatibility
-        response.set_cookie(key="user", value=token, **cookie_settings)
-        response.set_cookie(key="session", value=token, **cookie_settings)
+        # Return user data for frontend session creation - no longer setting cookies in backend
+        response = JSONResponse({
+            "token": token, 
+            "user": {
+                "id": user.email, 
+                "email": request.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "name": user.name
+            }
+        })
         
         return response
         
@@ -412,21 +408,17 @@ async def signup(request: SignupRequest):
         to_encode = {"sub": request.email, "exp": expire, "userId": user.email, "email": request.email}
         token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
         
-        # Create response with both JSON data and cookie
-        response = JSONResponse({"token": token, "user": {"email": request.email, "id": user.email}})
-        
-        # Cookie settings
-        cookie_settings = {
-            "httponly": True,
-            "max_age": 60*60*24*7,  # 7 days
-            "samesite": "lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
-            "secure": True if os.getenv("RAILWAY_ENVIRONMENT") else False,
-            "path": "/"
-        }
-        
-        # Set both old "user" cookie and new "session" cookie for compatibility
-        response.set_cookie(key="user", value=token, **cookie_settings)
-        response.set_cookie(key="session", value=token, **cookie_settings)
+        # Return user data for frontend session creation - no longer setting cookies in backend
+        response = JSONResponse({
+            "token": token, 
+            "user": {
+                "id": user.email, 
+                "email": request.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "name": user.name
+            }
+        })
         
         return response
         

@@ -2,7 +2,6 @@ import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { decrypt } from './session';
-import { jwtVerify } from 'jose';
 import { getApiUrl } from './apiUrl';
 
 export interface User {
@@ -16,37 +15,16 @@ export interface User {
   address?: string;
 }
 
-// Verify the session and return user data - supports both new and old cookie formats
+// Verify the session and return user data - uses new session cookie only
 export const verifySession = cache(async () => {
-  // First, try the new session cookie format
   const sessionCookie = (await cookies()).get('session')?.value;
   const session = await decrypt(sessionCookie);
 
-  if (session?.userId) {
-    return { isAuth: true, userId: session.userId, email: session.email };
+  if (!session?.userId) {
+    return null;
   }
 
-  // If no new session, check for old user cookie format for backward compatibility
-  const oldUserCookie = (await cookies()).get('user')?.value;
-  if (oldUserCookie) {
-    try {
-      const secret = new TextEncoder().encode(process.env.JWT_SECRET || 'supersecretkey');
-      const { payload } = await jwtVerify(oldUserCookie, secret);
-      
-      if (payload.email) {
-        return { 
-          isAuth: true, 
-          userId: payload.email as string, // Use email as userId for old format
-          email: payload.email as string 
-        };
-      }
-    } catch (error) {
-      // Old cookie is invalid, ignore and return null
-      console.log('Failed to verify old user cookie');
-    }
-  }
-
-  return null;
+  return { isAuth: true, userId: session.userId, email: session.email };
 });
 
 // Verify session for protected routes - will redirect to login if not authenticated
@@ -66,33 +44,20 @@ export const getUser = cache(async (): Promise<User | null> => {
   if (!session) return null;
 
   try {
-    const response = await fetch(getApiUrl('/me'), {
-      headers: {
-        'Cookie': (await cookies()).toString(),
-      },
-      cache: 'no-store', // Always fetch fresh data
-    });
-
-    if (!response.ok) {
-      // If backend call fails, don't throw - just return null
-      // This prevents errors from propagating to the UI
-      console.log(`Backend /me call failed with status: ${response.status}`);
-      return null;
-    }
-
-    const userData = await response.json();
+    // For now, return user data from session - later we can enhance this
+    // by calling backend when needed, but for basic navbar functionality this works
     return {
-      email: userData.email,
-      name: userData.name || `${userData.first_name} ${userData.last_name}`.trim() || "User",
-      first_name: userData.first_name,
-      last_name: userData.last_name,
-      fireflies_api_key: userData.fireflies_api_key,
-      zoom_jwt: userData.zoom_jwt,
-      phone: userData.phone,
-      address: userData.address,
+      email: session.email,
+      name: session.email.split('@')[0], // Use email prefix as default name
+      first_name: '',
+      last_name: '',
+      fireflies_api_key: '',
+      zoom_jwt: '',
+      phone: '',
+      address: '',
     };
   } catch (error) {
-    console.error('Failed to fetch user', error);
+    console.error('Failed to get user data', error);
     return null;
   }
 });

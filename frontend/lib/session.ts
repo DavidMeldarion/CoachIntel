@@ -36,24 +36,8 @@ export async function createSession(userId: string, email: string) {
   const session = await encrypt({ userId, email, expiresAt: expiresAt.toISOString() });
   const cookieStore = await cookies();
   
-  // Create the new encrypted session cookie for frontend middleware
+  // Create the new encrypted session cookie
   cookieStore.set('session', session, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    expires: expiresAt,
-    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
-    path: '/',
-  });
-
-  // Also create a compatible user cookie for backend compatibility
-  // Use the same JWT format the backend expects
-  const backendCompatibleJWT = await new SignJWT({ sub: email, email: email })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt()
-    .setExpirationTime('7d')
-    .sign(encodedKey);
-
-  cookieStore.set('user', backendCompatibleJWT, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     expires: expiresAt,
@@ -85,7 +69,6 @@ export async function updateSession() {
 export async function deleteSession() {
   const cookieStore = await cookies();
   cookieStore.delete('session');
-  cookieStore.delete('user'); // Also clear the backend-compatible cookie
 }
 
 export async function verifySession() {

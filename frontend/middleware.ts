@@ -24,11 +24,11 @@ export async function middleware(request: NextRequest) {
   const isProtectedRoute = protectedRoutes.some(route => pathname.startsWith(route));
   const isPublicRoute = publicRoutes.includes(pathname);
 
-  // Check for new session cookie first
+  // Check for session cookie
   const sessionCookie = request.cookies.get('session')?.value;
   const session = await decrypt(sessionCookie);
 
-  // If we have a valid new session, use it
+  // If user has a valid session
   if (session?.userId) {
     // Redirect to /dashboard if the user is authenticated and trying to access public route
     if (isPublicRoute && !request.nextUrl.pathname.startsWith('/dashboard')) {
@@ -64,26 +64,12 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // If no valid new session, check for old user cookie for backward compatibility
-  const oldUserCookie = request.cookies.get('user')?.value;
-  
-  // If user has old cookie but is trying to access protected route, redirect to login
-  // This will force them to re-authenticate and get the new session format
-  if (isProtectedRoute && !session?.userId) {
-    // Clear old cookies to prevent confusion
-    const response = NextResponse.redirect(new URL('/login', request.url));
-    if (oldUserCookie) {
-      response.cookies.set('user', '', { expires: new Date(0), path: '/' });
-    }
-    return response;
+  // If no valid session and trying to access protected route, redirect to login
+  if (isProtectedRoute) {
+    return NextResponse.redirect(new URL('/login', request.url));
   }
 
-  // For public routes, allow access regardless of cookie status
-  // This prevents infinite redirects on login/signup pages
-  if (isPublicRoute) {
-    return NextResponse.next();
-  }
-
+  // For public routes, allow access
   return NextResponse.next();
 }
 
