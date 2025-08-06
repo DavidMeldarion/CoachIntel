@@ -239,8 +239,8 @@ async def login(request: Request):
         value=token,
         httponly=True,
         max_age=60*60*24*30,  # 30 days
-        samesite="lax" if os.getenv("ENVIRONMENT") != "production" else "strict",
-        secure=True if os.getenv("ENVIRONMENT") == "production" else False,
+        samesite="lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
+        secure=True if os.getenv("RAILWAY_ENVIRONMENT") else False,
         path="/"
     )
     return response
@@ -327,9 +327,10 @@ async def google_oauth_callback(request: Request, code: str, state: str = None):
         key="user",
         value=token,
         httponly=True,
-        max_age=604800,
-        samesite="lax",  # Use lax for local dev
-        secure=False      # True for HTTPS
+        max_age=604800,  # 7 days
+        samesite="lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
+        secure=True if os.getenv("RAILWAY_ENVIRONMENT") else False,
+        path="/"
     )
     return response
 
@@ -376,6 +377,21 @@ async def get_calendar_events(user: User = Depends(verify_jwt_user)):
         events = resp.json().get("items", [])
     return {"events": events}
     
+@app.post("/logout")
+async def logout():
+    """Clear the authentication cookie"""
+    response = JSONResponse({"message": "Logged out successfully"})
+    response.set_cookie(
+        key="user",
+        value="",
+        httponly=True,
+        max_age=0,
+        samesite="lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
+        secure=True if os.getenv("RAILWAY_ENVIRONMENT") else False,
+        path="/"
+    )
+    return response
+
 @app.get("/me")
 async def get_current_user(user: User = Depends(verify_jwt_user)):
     return {
