@@ -1,29 +1,22 @@
 "use client";
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
-import { useUser } from '../../lib/userContext';
 
 export default function LogoutPage() {
-  const router = useRouter();
-  const { refreshUser } = useUser();
-  
   useEffect(() => {
+    // Clear storage immediately
+    localStorage.clear();
+    sessionStorage.clear();
+    
     // Call API route to clear the cookie server-side
     fetch('/api/logout', { method: 'POST' })
-      .then(async () => {
-        await refreshUser(); // Clear user context
-        localStorage.clear();
-        sessionStorage.clear();
-        router.replace('/login');
-      })
-      .catch(async () => {
-        // Even if logout fails, clear local state
-        await refreshUser();
-        localStorage.clear();
-        sessionStorage.clear();
-        router.replace('/login');
+      .finally(() => {
+        // Always redirect regardless of API success/failure
+        window.location.replace('/login');
       });
-  }, [router, refreshUser]);
+  }, []);
   
-  return null;
+  return (
+    <div>Logging out...</div>
+  );
 }

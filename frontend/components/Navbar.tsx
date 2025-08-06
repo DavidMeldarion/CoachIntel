@@ -40,34 +40,22 @@ export default function Navbar() {
   const handleLogout = async () => {
     console.log('[Navbar] Logout clicked');
     setDropdownOpen(false);
+    
+    // Clear any cached data immediately
+    localStorage.clear();
+    sessionStorage.clear();
+    
     try {
       console.log('[Navbar] Calling /api/logout');
       const logoutRes = await fetch("/api/logout", { method: "POST", credentials: "include" });
       console.log('[Navbar] Logout response:', logoutRes.status, logoutRes.ok);
-      
-      // Clear any cached data immediately
-      localStorage.clear();
-      sessionStorage.clear();
-      
-      // Wait a moment for cookie to be cleared
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      // Clear user state
-      console.log('[Navbar] Calling refreshUser');
-      await refreshUser();
-      
-      console.log('[Navbar] Redirecting to login');
-      
-      // Redirect to login
-      window.location.href = "/login";
     } catch (err) {
-      console.error("Navbar: Logout failed", err);
-      // Even if logout fails, clear local state and redirect
-      localStorage.clear();
-      sessionStorage.clear();
-      await refreshUser();
-      window.location.href = "/login";
+      console.error("Navbar: Logout API failed", err);
     }
+    
+    // Always redirect regardless of logout API success/failure
+    console.log('[Navbar] Redirecting to login');
+    window.location.replace("/login");
   };
 
   if (loading) {
