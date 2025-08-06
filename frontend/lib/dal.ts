@@ -2,6 +2,7 @@ import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { decrypt } from './session';
+import { jwtVerify } from 'jose';
 import { getApiUrl } from './apiUrl';
 
 export interface User {
@@ -15,16 +16,37 @@ export interface User {
   address?: string;
 }
 
-// Verify the session and return user data - does not redirect
+// Verify the session and return user data - supports both new and old cookie formats
 export const verifySession = cache(async () => {
-  const cookie = (await cookies()).get('session')?.value;
-  const session = await decrypt(cookie);
+  // First, try the new session cookie format
+  const sessionCookie = (await cookies()).get('session')?.value;
+  const session = await decrypt(sessionCookie);
 
-  if (!session?.userId) {
-    return null;
+  if (session?.userId) {
+    return { isAuth: true, userId: session.userId, email: session.email };
   }
 
-  return { isAuth: true, userId: session.userId, email: session.email };
+  // If no new session, check for old user cookie format for backward compatibility
+  const oldUserCookie = (await cookies()).get('user')?.value;
+  if (oldUserCookie) {
+    try {
+      const secret = new TextEncoder().encode(process.env.JWT_SECRET || 'supersecretkey');
+      const { payload } = await jwtVerify(oldUserCookie, secret);
+      
+      if (payload.email) {
+        return { 
+          isAuth: true, 
+          userId: payload.email as string, // Use email as userId for old format
+          email: payload.email as string 
+        };
+      }
+    } catch (error) {
+      // Old cookie is invalid, ignore and return null
+      console.log('Failed to verify old user cookie');
+    }
+  }
+
+  return null;
 });
 
 // Verify session for protected routes - will redirect to login if not authenticated
