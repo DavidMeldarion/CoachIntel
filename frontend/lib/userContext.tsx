@@ -23,7 +23,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
   const fetchUser = async () => {
-    // console.log("UserProvider: fetchUser called");
+    console.log("UserProvider: fetchUser called");
     setLoading(true);
     let didFinish = false;
     try {
@@ -34,13 +34,15 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
           "Cache-Control": "no-cache"
         }
       });
+      console.log("UserProvider: /me response status:", res.status, res.ok);
       if (!res.ok) {
+        console.log("UserProvider: Setting user to null due to !res.ok");
         setUser(null);
         didFinish = true;
         return;
       }
       const user = await res.json();
-      // console.debug("UserProvider: /me response", user);
+      console.log("UserProvider: /me response data:", user);
       setUser({
         email: user.email,
         name: user.name || `${user.first_name} ${user.last_name}`.trim() || "User",

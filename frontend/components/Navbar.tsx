@@ -38,14 +38,22 @@ export default function Navbar() {
 
   // Handle logout: call refreshUser after navigation
   const handleLogout = async () => {
+    console.log('[Navbar] Logout clicked');
     setDropdownOpen(false);
     try {
-      await fetch("/api/logout", { method: "POST", credentials: "include" });
+      console.log('[Navbar] Calling /api/logout');
+      const logoutRes = await fetch("/api/logout", { method: "POST", credentials: "include" });
+      console.log('[Navbar] Logout response:', logoutRes.status, logoutRes.ok);
+      
       // Clear user state immediately
+      console.log('[Navbar] Calling refreshUser');
       await refreshUser();
+      
       // Clear any cached data
       localStorage.clear();
       sessionStorage.clear();
+      console.log('[Navbar] Redirecting to login');
+      
       // Redirect to login
       window.location.href = "/login";
     } catch (err) {
