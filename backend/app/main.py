@@ -43,7 +43,26 @@ if not logger.hasHandlers():
 # Log CORS configuration for debugging
 logger.info(f"CORS configured for origins: {['http://localhost:3000', 'http://127.0.0.1:3000'] + frontend_origins}")
 
-app = FastAPI()
+app = FastAPI(
+    title="CoachIntel API",
+    root_path="/",
+    # Trust proxy headers for proper URL generation
+    servers=[{"url": "https://api.coachintel.ai", "description": "Production server"}] if os.getenv("RAILWAY_ENVIRONMENT") else None
+)
+
+# Trust proxy headers for Railway deployment
+@app.middleware("http")
+async def trust_proxy_headers(request: Request, call_next):
+    # Railway uses proxy headers for HTTPS termination
+    if os.getenv("RAILWAY_ENVIRONMENT"):
+        # Trust the X-Forwarded-Proto header from Railway's proxy
+        forwarded_proto = request.headers.get("X-Forwarded-Proto")
+        if forwarded_proto == "https":
+            # Update the request URL scheme to https
+            request.scope["scheme"] = "https"
+    
+    response = await call_next(request)
+    return response
 
 app.add_middleware(
     CORSMiddleware,
