@@ -102,12 +102,15 @@ class UserProfileOut(BaseModel):
 # JWT/session verification dependency
 async def verify_jwt_user(request: Request):
     cookie_header = request.headers.get("cookie", "")
+    print(f"[Backend] verify_jwt_user - cookie_header: {cookie_header}")
     token = None
     for cookie in cookie_header.split(";"):
         if "user=" in cookie:
             token = cookie.split("user=")[1].strip()
             break
+    print(f"[Backend] verify_jwt_user - extracted token: {token[:20] if token else None}...")
     if not token:
+        print("[Backend] verify_jwt_user - No token found, raising 401")
         raise HTTPException(status_code=401, detail="No authentication token")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -117,6 +120,7 @@ async def verify_jwt_user(request: Request):
         user = await get_user_by_email(email)
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
+        print(f"[Backend] verify_jwt_user - Successfully verified user: {user.email}")
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
@@ -377,8 +381,26 @@ async def get_calendar_events(user: User = Depends(verify_jwt_user)):
         events = resp.json().get("items", [])
     return {"events": events}
     
+@app.post("/logout")
+async def logout():
+    """Clear the authentication cookie"""
+    print("[Backend] Logout endpoint called")
+    response = JSONResponse({"message": "Logged out successfully"})
+    response.set_cookie(
+        key="user",
+        value="",
+        httponly=True,
+        max_age=0,
+        samesite="lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
+        secure=True if os.getenv("RAILWAY_ENVIRONMENT") else False,
+        path="/"
+    )
+    print(f"[Backend] Cookie cleared with secure={True if os.getenv('RAILWAY_ENVIRONMENT') else False}, samesite={'strict' if os.getenv('RAILWAY_ENVIRONMENT') else 'lax'}")
+    return response
+
 @app.get("/me")
 async def get_current_user(user: User = Depends(verify_jwt_user)):
+    print(f"[Backend] /me endpoint called for user: {user.email}")
     response = JSONResponse({
         "email": user.email,
         "first_name": user.first_name,

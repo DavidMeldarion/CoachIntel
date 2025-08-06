@@ -110,11 +110,24 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setLoading(false);
     
     try {
-      // Call logout API
-      await fetch('/api/logout', { method: 'POST' });
-      console.log("UserProvider: logout API called successfully");
+      // Call backend logout API directly since the cookie was set by the backend
+      const backendLogoutUrl = getApiUrl('/logout');
+      console.log("UserProvider: calling backend logout at", backendLogoutUrl);
+      const response = await fetch(backendLogoutUrl, { 
+        method: 'POST',
+        credentials: 'include'
+      });
+      console.log("UserProvider: backend logout response:", response.status, response.ok);
     } catch (error) {
-      console.error("UserProvider: logout API failed", error);
+      console.error("UserProvider: backend logout failed", error);
+    }
+    
+    // Also try frontend logout as fallback
+    try {
+      await fetch('/api/logout', { method: 'POST' });
+      console.log("UserProvider: frontend logout API called successfully");
+    } catch (error) {
+      console.error("UserProvider: frontend logout API failed", error);
     }
     
     // Clear storage
