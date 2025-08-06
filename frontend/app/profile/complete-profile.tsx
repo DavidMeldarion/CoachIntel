@@ -1,12 +1,21 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useUser } from "../../lib/userContext";
 import { getApiUrl } from "../../lib/apiUrl";
+
+interface User {
+  email: string;
+  name: string;
+  first_name?: string;
+  last_name?: string;
+  fireflies_api_key?: string;
+  zoom_jwt?: string;
+}
 
 export default function CompleteProfile() {
   const router = useRouter();
-  const { user, loading: userLoading } = useUser();
+  const [user, setUser] = useState<User | null>(null);
+  const [userLoading, setUserLoading] = useState(true);
   const [form, setForm] = useState({
     email: "",
     firstName: "",
@@ -16,6 +25,43 @@ export default function CompleteProfile() {
   });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+
+  // Fetch user data using new session approach
+  const fetchUser = async () => {
+    try {
+      const response = await fetch(getApiUrl("/me"), { 
+        credentials: "include",
+        cache: "no-cache",
+      });
+      if (response.ok) {
+        const userData = await response.json();
+        const userProfile: User = {
+          email: userData.email,
+          name: userData.name || `${userData.first_name} ${userData.last_name}`.trim() || "User",
+          first_name: userData.first_name || "",
+          last_name: userData.last_name || "",
+          fireflies_api_key: userData.fireflies_api_key || "",
+          zoom_jwt: userData.zoom_jwt || "",
+        };
+        setUser(userProfile);
+        return userProfile;
+      } else {
+        router.push('/login');
+        return null;
+      }
+    } catch (error) {
+      console.error('Failed to fetch user:', error);
+      router.push('/login');
+      return null;
+    } finally {
+      setUserLoading(false);
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchUser();
+  }, [router]);
 
   useEffect(() => {
     async function fetchProfile() {

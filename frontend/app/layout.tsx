@@ -1,8 +1,7 @@
 import '../styles/globals.css';
 import { SpeedInsights } from "@vercel/speed-insights/next"
 import { Analytics } from "@vercel/analytics/react"
-import Navbar from '../components/Navbar';
-import { UserProvider } from '../lib/userContext';
+import NavbarServer from '../components/NavbarServer';
 import { SyncProvider } from '../lib/syncContext';
 import ClientLayout from './ClientLayout';
 
@@ -12,12 +11,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="bg-gray-50">
         <ClientLayout>
           <SyncProvider>
-            <UserProvider>
-              <Navbar />
-              {children}
-              <SpeedInsights />
-              <Analytics />
-            </UserProvider>
+            <NavbarServer />
+            {children}
+            <SpeedInsights />
+            <Analytics />
           </SyncProvider>
         </ClientLayout>
       </body>

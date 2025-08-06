@@ -103,18 +103,29 @@ class UserProfileOut(BaseModel):
 async def verify_jwt_user(request: Request):
     cookie_header = request.headers.get("cookie", "")
     print(f"[Backend] verify_jwt_user - cookie_header: {cookie_header}")
-    token = None
+    
+    # Check for new "session" cookie first (Next.js best practices)
+    session_token = None
+    user_token = None
+    
     for cookie in cookie_header.split(";"):
-        if "user=" in cookie:
-            token = cookie.split("user=")[1].strip()
+        cookie = cookie.strip()
+        if cookie.startswith("session="):
+            session_token = cookie.split("session=")[1]
             break
-    print(f"[Backend] verify_jwt_user - extracted token: {token[:20] if token else None}...")
+        elif cookie.startswith("user="):
+            user_token = cookie.split("user=")[1]
+    
+    token = session_token or user_token
+    print(f"[Backend] verify_jwt_user - extracted token: {token[:20] if token else None}... (from {'session' if session_token else 'user'} cookie)")
+    
     if not token:
         print("[Backend] verify_jwt_user - No token found, raising 401")
         raise HTTPException(status_code=401, detail="No authentication token")
+    
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email = payload.get("sub")
+        email = payload.get("sub") or payload.get("email")  # Support both formats
         if not email:
             raise HTTPException(status_code=401, detail="Invalid token")
         user = await get_user_by_email(email)
@@ -228,26 +239,90 @@ async def login(request: Request):
     # TODO: Replace with real user lookup and password check
     if not email or not password:
         raise HTTPException(status_code=400, detail="Email and password required")
-    # Dummy check: allow any non-empty email/password
-    user = {"email": email}
-    # Issue JWT
+    
+    # Check if user exists
+    user = await get_user_by_email(email)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    # Dummy check: allow any non-empty email/password for now
+    # TODO: Implement proper password verification
+    
+    # Issue JWT with updated payload structure
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode = {"sub": email, "exp": expire}
+    to_encode = {"sub": email, "exp": expire, "userId": user.email, "email": email}
     token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     
     # Create response with both JSON data and cookie
-    response = JSONResponse({"token": token, "user": user})
-    # Use secure=True for production, lax for dev
-    response.set_cookie(
-        key="user",
-        value=token,
-        httponly=True,
-        max_age=60*60*24*30,  # 30 days
-        samesite="lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
-        secure=True if os.getenv("RAILWAY_ENVIRONMENT") else False,
-        path="/"
-    )
+    response = JSONResponse({"token": token, "user": {"email": email, "id": user.email}})
+    
+    # Cookie settings
+    cookie_settings = {
+        "httponly": True,
+        "max_age": 60*60*24*7,  # 7 days
+        "samesite": "lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
+        "secure": True if os.getenv("RAILWAY_ENVIRONMENT") else False,
+        "path": "/"
+    }
+    
+    # Set both old "user" cookie and new "session" cookie for compatibility
+    response.set_cookie(key="user", value=token, **cookie_settings)
+    response.set_cookie(key="session", value=token, **cookie_settings)
+    
     return response
+
+@app.post("/signup")
+async def signup(request: Request):
+    data = await request.json()
+    email = data.get("email")
+    password = data.get("password")
+    
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password required")
+    
+    # Check if user already exists
+    existing_user = await get_user_by_email(email)
+    if existing_user:
+        raise HTTPException(status_code=409, detail="User already exists")
+    
+    # TODO: Hash password properly in production
+    # For now, create user without password storage (OAuth-first approach)
+    try:
+        user = await create_or_update_user(
+            email=email,
+            first_name="",
+            last_name="",
+            fireflies_api_key=None,
+            zoom_jwt=None,
+            phone=None,
+            address=None,
+        )
+        
+        # Issue JWT with updated payload structure
+        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        to_encode = {"sub": email, "exp": expire, "userId": user.email, "email": email}
+        token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+        
+        # Create response with both JSON data and cookie
+        response = JSONResponse({"token": token, "user": {"email": email, "id": user.email}})
+        
+        # Cookie settings
+        cookie_settings = {
+            "httponly": True,
+            "max_age": 60*60*24*7,  # 7 days
+            "samesite": "lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
+            "secure": True if os.getenv("RAILWAY_ENVIRONMENT") else False,
+            "path": "/"
+        }
+        
+        # Set both old "user" cookie and new "session" cookie for compatibility
+        response.set_cookie(key="user", value=token, **cookie_settings)
+        response.set_cookie(key="session", value=token, **cookie_settings)
+        
+        return response
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to create user")
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
@@ -324,18 +399,24 @@ async def google_oauth_callback(request: Request, code: str, state: str = None):
         await session.commit()
     # Issue JWT and set cookie
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode = {"sub": email, "exp": expire}
+    to_encode = {"sub": email, "exp": expire, "userId": user.email, "email": email}
     token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     response = RedirectResponse(f"{FRONTEND_URL}/dashboard")
-    response.set_cookie(
-        key="user",
-        value=token,
-        httponly=True,
-        max_age=604800,  # 7 days
-        samesite="lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
-        secure=True if os.getenv("RAILWAY_ENVIRONMENT") else False,
-        path="/"
-    )
+    
+    # Set both old "user" cookie and new "session" cookie for compatibility
+    cookie_settings = {
+        "httponly": True,
+        "max_age": 604800,  # 7 days
+        "samesite": "lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
+        "secure": True if os.getenv("RAILWAY_ENVIRONMENT") else False,
+        "path": "/"
+    }
+    
+    # Old cookie for backward compatibility
+    response.set_cookie(key="user", value=token, **cookie_settings)
+    # New session cookie for Next.js best practices
+    response.set_cookie(key="session", value=token, **cookie_settings)
+    
     return response
 
 @app.get("/calendar/events")
@@ -383,19 +464,24 @@ async def get_calendar_events(user: User = Depends(verify_jwt_user)):
     
 @app.post("/logout")
 async def logout():
-    """Clear the authentication cookie"""
+    """Clear the authentication cookies"""
     print("[Backend] Logout endpoint called")
     response = JSONResponse({"message": "Logged out successfully"})
-    response.set_cookie(
-        key="user",
-        value="",
-        httponly=True,
-        max_age=0,
-        samesite="lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
-        secure=True if os.getenv("RAILWAY_ENVIRONMENT") else False,
-        path="/"
-    )
-    print(f"[Backend] Cookie cleared with secure={True if os.getenv('RAILWAY_ENVIRONMENT') else False}, samesite={'strict' if os.getenv('RAILWAY_ENVIRONMENT') else 'lax'}")
+    
+    # Cookie settings for clearing
+    cookie_clear_settings = {
+        "httponly": True,
+        "max_age": 0,
+        "samesite": "lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
+        "secure": True if os.getenv("RAILWAY_ENVIRONMENT") else False,
+        "path": "/"
+    }
+    
+    # Clear both old "user" cookie and new "session" cookie
+    response.set_cookie(key="user", value="", **cookie_clear_settings)
+    response.set_cookie(key="session", value="", **cookie_clear_settings)
+    
+    print(f"[Backend] Both cookies cleared with secure={True if os.getenv('RAILWAY_ENVIRONMENT') else False}, samesite={'strict' if os.getenv('RAILWAY_ENVIRONMENT') else 'lax'}")
     return response
 
 @app.get("/me")

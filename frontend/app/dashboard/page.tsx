@@ -2,13 +2,24 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useUser } from "../../lib/userContext";
 import { useSync } from "../../lib/syncContext";
 import { getApiUrl } from "../../lib/apiUrl";
 
+interface User {
+  email: string;
+  name: string;
+  first_name?: string;
+  last_name?: string;
+  fireflies_api_key?: string;
+  zoom_jwt?: string;
+  phone?: string;
+  address?: string;
+}
+
 function Dashboard() {
-  const { user, loading: userLoading } = useUser();
   const { triggerSync } = useSync();
+  const [user, setUser] = useState<User | null>(null);
+  const [userLoading, setUserLoading] = useState(true);
   const [upcomingMeetings, setUpcomingMeetings] = useState<any[]>([]);
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [meetingStats, setMeetingStats] = useState({ total: 0, week: 0, month: 0, byType: {} as Record<string, number> });
@@ -17,6 +28,41 @@ function Dashboard() {
   const [syncError, setSyncError] = useState("");
   const [showReconnect, setShowReconnect] = useState(false);
   const [error, setError] = useState("");
+
+  // Fetch user data using new session approach
+  useEffect(() => {
+    async function fetchUser() {
+      try {
+        const response = await fetch(getApiUrl("/me"), { 
+          credentials: "include",
+          cache: "no-cache",
+        });
+        if (response.ok) {
+          const userData = await response.json();
+          setUser({
+            email: userData.email,
+            name: userData.name || `${userData.first_name} ${userData.last_name}`.trim() || "User",
+            first_name: userData.first_name,
+            last_name: userData.last_name,
+            fireflies_api_key: userData.fireflies_api_key,
+            zoom_jwt: userData.zoom_jwt,
+            phone: userData.phone,
+            address: userData.address,
+          });
+        } else {
+          // Redirect to login if not authenticated
+          window.location.href = '/login';
+        }
+      } catch (error) {
+        console.error('Failed to fetch user:', error);
+        window.location.href = '/login';
+      } finally {
+        setUserLoading(false);
+      }
+    }
+    
+    fetchUser();
+  }, []);
 
   useEffect(() => {
     async function fetchData() {

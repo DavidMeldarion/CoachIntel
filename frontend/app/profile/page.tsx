@@ -1,10 +1,9 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useUser, User } from "../../lib/userContext";
 import { getApiUrl } from "../../lib/apiUrl";
 
-// Use the same type as context for full type safety
+// Define the user profile type
 export type UserProfile = {
   email: string;
   name: string;
@@ -18,7 +17,8 @@ export type UserProfile = {
 
 export default function Profile() {
   const router = useRouter();
-  const { user, loading: userLoading, refreshUser } = useUser();
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [userLoading, setUserLoading] = useState(true);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -36,6 +36,55 @@ export default function Profile() {
   });
   const [firefliesTestStatus, setFirefliesTestStatus] = useState<string>("");
   const [testingFireflies, setTestingFireflies] = useState(false);
+
+  // Fetch user data using new session approach
+  const fetchUser = async () => {
+    try {
+      const response = await fetch(getApiUrl("/me"), { 
+        credentials: "include",
+        cache: "no-cache",
+      });
+      if (response.ok) {
+        const userData = await response.json();
+        const userProfile: UserProfile = {
+          email: userData.email,
+          name: userData.name || `${userData.first_name} ${userData.last_name}`.trim() || "User",
+          first_name: userData.first_name || "",
+          last_name: userData.last_name || "",
+          fireflies_api_key: userData.fireflies_api_key || "",
+          zoom_jwt: userData.zoom_jwt || "",
+          phone: userData.phone || "",
+          address: userData.address || "",
+        };
+        setUser(userProfile);
+        setProfile(userProfile);
+        setFormData(userProfile);
+      } else {
+        // Redirect to login if not authenticated
+        router.push('/login');
+      }
+    } catch (error) {
+      console.error('Failed to fetch user:', error);
+      router.push('/login');
+    } finally {
+      setUserLoading(false);
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchUser();
+  }, [router]);
+
+  useEffect(() => {
+    fetchUser().then((userProfile) => {
+      if (userProfile) {
+        setProfile(userProfile);
+        setFormData(userProfile);
+      }
+      setLoading(false);
+    });
+  }, []);
 
   useEffect(() => {
     // Don't redirect during loading state - let middleware handle auth
@@ -91,7 +140,7 @@ export default function Profile() {
         setProfile(updatedProfile);
         setIsEditing(false);
         setSuccess("Profile updated successfully!");
-        await refreshUser(); // Refresh context after profile update
+        await fetchUser(); // Refresh user data after profile update
       } else {
         setError("Failed to update profile");
       }
