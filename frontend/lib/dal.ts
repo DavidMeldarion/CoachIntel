@@ -76,6 +76,7 @@ export const getUser = cache(async (): Promise<User | null> => {
     if (!response.ok) {
       // If backend call fails, don't throw - just return null
       // This prevents errors from propagating to the UI
+      console.log(`Backend /me call failed with status: ${response.status}`);
       return null;
     }
 
