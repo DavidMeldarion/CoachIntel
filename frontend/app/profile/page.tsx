@@ -38,6 +38,9 @@ export default function Profile() {
   const [testingFireflies, setTestingFireflies] = useState(false);
 
   useEffect(() => {
+    // Don't redirect during loading state - let middleware handle auth
+    if (userLoading) return;
+    
     if (user) {
       // Map context user to local UserProfile type, ensuring required fields
       setProfile({
@@ -62,9 +65,10 @@ export default function Profile() {
       });
       setLoading(false);
     } else {
+      // Only redirect if we're not loading and user is definitely null
       router.push("/login");
     }
-  }, [user, router]);
+  }, [user, userLoading, router]);
 
   async function handleSave() {
     setError("");
