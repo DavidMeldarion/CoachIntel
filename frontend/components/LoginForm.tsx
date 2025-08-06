@@ -1,10 +1,25 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useFormState } from 'react-dom';
+import { useFormStatus } from 'react-dom';
 import { login } from '../lib/auth-actions';
 
+function SubmitButton() {
+  const { pending } = useFormStatus();
+  
+  return (
+    <button
+      type="submit"
+      disabled={pending}
+      className="w-full bg-blue-600 text-white font-semibold rounded py-2 hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      {pending ? 'Signing in...' : 'Sign In'}
+    </button>
+  );
+}
+
 export default function LoginForm() {
-  const [state, action, pending] = useActionState(login, undefined);
+  const [state, action] = useFormState(login, undefined);
 
   return (
     <form action={action} className="space-y-4">
@@ -44,13 +59,7 @@ export default function LoginForm() {
         <p className="text-sm text-red-600">{state.message}</p>
       )}
 
-      <button
-        disabled={pending}
-        type="submit"
-        className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-      >
-        {pending ? 'Signing in...' : 'Sign In'}
-      </button>
+      <SubmitButton />
     </form>
   );
 }

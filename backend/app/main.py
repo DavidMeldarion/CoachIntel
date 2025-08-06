@@ -1,12 +1,10 @@
-# Dummy FastAPI app for CoachIntel backend
 import os
 import time
 import jwt
 import json
-import logging
 from fastapi import FastAPI, HTTPException, UploadFile, File, Query, Request, Body, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, validator, Field, ValidationError
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 import httpx
@@ -15,6 +13,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import selectinload
 import logging
 from celery.result import AsyncResult
+from passlib.context import CryptContext
 from .integrations import get_fireflies_meeting_details, test_fireflies_api_key
 from .models import User, create_or_update_user, get_user_by_email, Meeting, Transcript, AsyncSessionLocal
 from sqlalchemy import select
@@ -64,6 +63,17 @@ async def trust_proxy_headers(request: Request, call_next):
     response = await call_next(request)
     return response
 
+# Password hashing setup
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a plain password against its hash."""
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password: str) -> str:
+    """Hash a password."""
+    return pwd_context.hash(password)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"] + frontend_origins,
@@ -77,14 +87,78 @@ SECRET_KEY = os.getenv("JWT_SECRET", "supersecretkey")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
+# Enhanced Pydantic models with validation
+class LoginRequest(BaseModel):
+    email: str = Field(..., description="User email address")
+    password: str = Field(..., min_length=1, description="User password")
+    
+    @validator("email")
+    def validate_email(cls, v):
+        import re
+        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(pattern, v):
+            raise ValueError("Invalid email format")
+        return v.lower()
+
+class SignupRequest(BaseModel):
+    email: str = Field(..., description="User email address")
+    password: str = Field(..., min_length=8, description="User password")
+    first_name: str = Field(default="", description="User first name")
+    last_name: str = Field(default="", description="User last name")
+    
+    @validator("email")
+    def validate_email(cls, v):
+        import re
+        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(pattern, v):
+            raise ValueError("Invalid email format")
+        return v.lower()
+    
+    @validator("password")
+    def validate_password(cls, v):
+        import re
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long")
+        if not re.search(r'[A-Za-z]', v):
+            raise ValueError("Password must contain at least one letter")
+        if not re.search(r'\d', v):
+            raise ValueError("Password must contain at least one number")
+        if not re.search(r'[^A-Za-z0-9]', v):
+            raise ValueError("Password must contain at least one special character")
+        return v
+    
+    @validator("first_name", "last_name")
+    def validate_names(cls, v):
+        if v and len(v.strip()) > 50:
+            raise ValueError("Name must be less than 50 characters")
+        return v.strip() if v else ""
+
 class UserProfileIn(BaseModel):
-    email: str
-    first_name: str
-    last_name: str
-    fireflies_api_key: str | None = None
-    zoom_jwt: str | None = None
-    phone: str | None = None
-    address: str | None = None
+    email: str = Field(..., description="User email address")
+    first_name: str = Field(..., max_length=50, description="User first name")
+    last_name: str = Field(..., max_length=50, description="User last name")
+    fireflies_api_key: str | None = Field(None, description="Fireflies API key")
+    zoom_jwt: str | None = Field(None, description="Zoom JWT token")
+    phone: str | None = Field(None, max_length=20, description="Phone number")
+    address: str | None = Field(None, max_length=200, description="Address")
+    
+    @validator("email")
+    def validate_email(cls, v):
+        import re
+        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(pattern, v):
+            raise ValueError("Invalid email format")
+        return v.lower()
+    
+    @validator("phone")
+    def validate_phone(cls, v):
+        if v:
+            import re
+            # Basic phone validation - allows various formats
+            pattern = r'^[\+]?[\d\s\-\(\)]{10,20}$'
+            if not re.match(pattern, v):
+                raise ValueError("Invalid phone number format")
+        return v
 
 class UserProfileOut(BaseModel):
     email: str
@@ -232,79 +306,53 @@ async def upsert_user(profile: UserProfileIn):
     )
 
 @app.post("/login")
-async def login(request: Request):
-    data = await request.json()
-    email = data.get("email")
-    password = data.get("password")
-    # TODO: Replace with real user lookup and password check
-    if not email or not password:
-        raise HTTPException(status_code=400, detail="Email and password required")
-    
-    # Check if user exists
-    user = await get_user_by_email(email)
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    
-    # Dummy check: allow any non-empty email/password for now
-    # TODO: Implement proper password verification
-    
-    # Issue JWT with updated payload structure
-    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode = {"sub": email, "exp": expire, "userId": user.email, "email": email}
-    token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    
-    # Create response with both JSON data and cookie
-    response = JSONResponse({"token": token, "user": {"email": email, "id": user.email}})
-    
-    # Cookie settings
-    cookie_settings = {
-        "httponly": True,
-        "max_age": 60*60*24*7,  # 7 days
-        "samesite": "lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
-        "secure": True if os.getenv("RAILWAY_ENVIRONMENT") else False,
-        "path": "/"
-    }
-    
-    # Set both old "user" cookie and new "session" cookie for compatibility
-    response.set_cookie(key="user", value=token, **cookie_settings)
-    response.set_cookie(key="session", value=token, **cookie_settings)
-    
-    return response
-
-@app.post("/signup")
-async def signup(request: Request):
-    data = await request.json()
-    email = data.get("email")
-    password = data.get("password")
-    
-    if not email or not password:
-        raise HTTPException(status_code=400, detail="Email and password required")
-    
-    # Check if user already exists
-    existing_user = await get_user_by_email(email)
-    if existing_user:
-        raise HTTPException(status_code=409, detail="User already exists")
-    
-    # TODO: Hash password properly in production
-    # For now, create user without password storage (OAuth-first approach)
+async def login(request: LoginRequest):
     try:
-        user = await create_or_update_user(
-            email=email,
-            first_name="",
-            last_name="",
-            fireflies_api_key=None,
-            zoom_jwt=None,
-            phone=None,
-            address=None,
-        )
+        # Check if user exists
+        user = await get_user_by_email(request.email)
+        if not user:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "Invalid email or password"}
+            )
+        
+        # Verify password (support both hashed and legacy plain text)
+        if user.password:
+            # Check if password is hashed (starts with hash algorithm prefix)
+            if user.password.startswith("$2b$"):
+                # Hashed password - verify with bcrypt
+                if not verify_password(request.password, user.password):
+                    return JSONResponse(
+                        status_code=401,
+                        content={"error": "Invalid email or password"}
+                    )
+            else:
+                # Legacy plain text password (for backward compatibility)
+                if request.password != user.password:
+                    return JSONResponse(
+                        status_code=401,
+                        content={"error": "Invalid email or password"}
+                    )
+                # Upgrade to hashed password on successful login
+                hashed_password = get_password_hash(request.password)
+                await create_or_update_user(
+                    email=user.email,
+                    password=hashed_password
+                )
+        else:
+            # No password set (OAuth-only user)
+            return JSONResponse(
+                status_code=401,
+                content={"error": "Password login not available for this account. Please use Google sign-in."}
+            )
         
         # Issue JWT with updated payload structure
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-        to_encode = {"sub": email, "exp": expire, "userId": user.email, "email": email}
+        to_encode = {"sub": request.email, "exp": expire, "userId": user.email, "email": request.email}
         token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
         
         # Create response with both JSON data and cookie
-        response = JSONResponse({"token": token, "user": {"email": email, "id": user.email}})
+        response = JSONResponse({"token": token, "user": {"email": request.email, "id": user.email}})
         
         # Cookie settings
         cookie_settings = {
@@ -321,8 +369,78 @@ async def signup(request: Request):
         
         return response
         
+    except ValidationError as e:
+        return JSONResponse(
+            status_code=422,
+            content={"error": "Validation error", "details": e.errors()}
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to create user")
+        logger.error(f"Login error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Internal server error"}
+        )
+
+@app.post("/signup")
+async def signup(request: SignupRequest):
+    try:
+        # Check if user already exists
+        existing_user = await get_user_by_email(request.email)
+        if existing_user:
+            return JSONResponse(
+                status_code=409,
+                content={"error": "User with this email already exists"}
+            )
+        
+        # Hash the password
+        hashed_password = get_password_hash(request.password)
+        
+        # Create user with hashed password
+        user = await create_or_update_user(
+            email=request.email,
+            first_name=request.first_name,
+            last_name=request.last_name,
+            fireflies_api_key=None,
+            zoom_jwt=None,
+            phone=None,
+            address=None,
+            password=hashed_password  # Add password field to create_or_update_user
+        )
+        
+        # Issue JWT with updated payload structure
+        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        to_encode = {"sub": request.email, "exp": expire, "userId": user.email, "email": request.email}
+        token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+        
+        # Create response with both JSON data and cookie
+        response = JSONResponse({"token": token, "user": {"email": request.email, "id": user.email}})
+        
+        # Cookie settings
+        cookie_settings = {
+            "httponly": True,
+            "max_age": 60*60*24*7,  # 7 days
+            "samesite": "lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
+            "secure": True if os.getenv("RAILWAY_ENVIRONMENT") else False,
+            "path": "/"
+        }
+        
+        # Set both old "user" cookie and new "session" cookie for compatibility
+        response.set_cookie(key="user", value=token, **cookie_settings)
+        response.set_cookie(key="session", value=token, **cookie_settings)
+        
+        return response
+        
+    except ValidationError as e:
+        return JSONResponse(
+            status_code=422,
+            content={"error": "Validation error", "details": e.errors()}
+        )
+    except Exception as e:
+        logger.error(f"Signup error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Failed to create user"}
+        )
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")

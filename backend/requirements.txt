@@ -18,3 +18,5 @@ asgiref
 redis-cli
 openai
 postmarker
+bcrypt
+passlib[bcrypt]

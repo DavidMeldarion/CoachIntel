@@ -77,13 +77,8 @@ export default function Profile() {
   }, [router]);
 
   useEffect(() => {
-    fetchUser().then((userProfile) => {
-      if (userProfile) {
-        setProfile(userProfile);
-        setFormData(userProfile);
-      }
-      setLoading(false);
-    });
+    // Initialize user data on component mount
+    fetchUser();
   }, []);
 
   useEffect(() => {

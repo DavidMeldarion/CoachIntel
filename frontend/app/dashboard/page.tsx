@@ -242,7 +242,7 @@ function Dashboard() {
     setSyncError("");
     try {
       // Start sync and get task_id
-      const res = await fetch(getApiUrl("/external-meetings"), {
+      const res = await fetch(getApiUrl("/sync/external-meetings"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",

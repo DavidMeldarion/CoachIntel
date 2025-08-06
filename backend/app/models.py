@@ -151,7 +151,7 @@ async def get_user_by_email(email: str):
         user = result.scalar_one_or_none()
         return user
 
-async def create_or_update_user(email: str, name: str = None, first_name: str = None, last_name: str = None, fireflies_api_key: str = None, zoom_jwt: str = None, phone: str = None, address: str = None):
+async def create_or_update_user(email: str, name: str = None, first_name: str = None, last_name: str = None, fireflies_api_key: str = None, zoom_jwt: str = None, phone: str = None, address: str = None, password: str = None):
     async with AsyncSessionLocal() as session:
         # Get user within the same session to avoid session detachment issues
         result = await session.execute(
@@ -175,12 +175,14 @@ async def create_or_update_user(email: str, name: str = None, first_name: str = 
                 user.phone = phone
             if address is not None:
                 user.address = address
+            if password is not None:
+                user.password = password
         else:
             # Create new user - ensure first_name and last_name are never None due to DB constraints
             if first_name is None and last_name is None and name:
                 # Use the name setter to split into first/last
                 user = User(email=email, first_name="", last_name="", 
-                           fireflies_api_key=fireflies_api_key, zoom_jwt=zoom_jwt, phone=phone, address=address)
+                           fireflies_api_key=fireflies_api_key, zoom_jwt=zoom_jwt, phone=phone, address=address, password=password)
                 user.name = name  # This will set first_name and last_name
             else:
                 # Ensure first_name and last_name are never None
@@ -190,7 +192,8 @@ async def create_or_update_user(email: str, name: str = None, first_name: str = 
                            fireflies_api_key=fireflies_api_key, 
                            zoom_jwt=zoom_jwt, 
                            phone=phone, 
-                           address=address)
+                           address=address,
+                           password=password)
             session.add(user)  # Add the new user to the session
         await session.commit()
         await session.refresh(user)
