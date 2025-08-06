@@ -394,7 +394,7 @@ async def logout():
 
 @app.get("/me")
 async def get_current_user(user: User = Depends(verify_jwt_user)):
-    return {
+    response = JSONResponse({
         "email": user.email,
         "first_name": user.first_name,
         "last_name": user.last_name,
@@ -403,7 +403,12 @@ async def get_current_user(user: User = Depends(verify_jwt_user)):
         "zoom_jwt": user.zoom_jwt,
         "phone": user.phone,
         "address": user.address
-    }
+    })
+    # Prevent caching of user data
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 @app.options("/user")
 async def options_user():

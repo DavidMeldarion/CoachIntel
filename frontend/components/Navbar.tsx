@@ -41,11 +41,21 @@ export default function Navbar() {
     setDropdownOpen(false);
     try {
       await fetch("/api/logout", { method: "POST", credentials: "include" });
+      // Clear user state immediately
+      await refreshUser();
+      // Clear any cached data
+      localStorage.clear();
+      sessionStorage.clear();
+      // Redirect to login
+      window.location.href = "/login";
     } catch (err) {
       console.error("Navbar: Logout failed", err);
+      // Even if logout fails, clear local state and redirect
+      await refreshUser();
+      localStorage.clear();
+      sessionStorage.clear();
+      window.location.href = "/login";
     }
-    await refreshUser();
-    window.location.href = "/login";
   };
 
   if (loading) {

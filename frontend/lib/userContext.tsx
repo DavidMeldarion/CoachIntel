@@ -27,7 +27,13 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     let didFinish = false;
     try {
-      const res = await fetch(getApiUrl("/me"), { credentials: "include" });
+      const res = await fetch(getApiUrl("/me"), { 
+        credentials: "include",
+        cache: "no-cache", // Prevent caching
+        headers: {
+          "Cache-Control": "no-cache"
+        }
+      });
       if (!res.ok) {
         setUser(null);
         didFinish = true;
