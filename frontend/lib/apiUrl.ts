@@ -6,7 +6,12 @@ export function getApiUrl(endpoint: string = ''): string {
   // If we have a direct API URL, use it (Railway approach)
   if (directApiUrl) {
     // Remove trailing slash from base URL
-    const cleanBaseUrl = directApiUrl.replace(/\/+$/, '');
+    let cleanBaseUrl = directApiUrl.replace(/\/+$/, '');
+    
+    // Force HTTPS in production to prevent mixed content errors
+    if (process.env.NODE_ENV === 'production' && cleanBaseUrl.startsWith('http://')) {
+      cleanBaseUrl = cleanBaseUrl.replace('http://', 'https://');
+    }
     
     // Ensure endpoint starts with exactly one slash
     const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
