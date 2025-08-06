@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { useUser } from "../lib/userContext";
 
 export default function Navbar() {
-  const { user, loading, refreshUser } = useUser();
+  const { user, loading, logout } = useUser();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const loggedIn = !!user;
@@ -36,26 +36,25 @@ export default function Navbar() {
     return user?.email?.split('@')[0] || 'User';
   })();
 
-  // Handle logout: call refreshUser after navigation
+  // Handle logout: use the dedicated logout function
   const handleLogout = async () => {
     console.log('[Navbar] Logout clicked');
     setDropdownOpen(false);
     
-    // Clear any cached data immediately
-    localStorage.clear();
-    sessionStorage.clear();
-    
     try {
-      console.log('[Navbar] Calling /api/logout');
-      const logoutRes = await fetch("/api/logout", { method: "POST", credentials: "include" });
-      console.log('[Navbar] Logout response:', logoutRes.status, logoutRes.ok);
+      // Use the userContext logout function which immediately clears state
+      console.log('[Navbar] Calling userContext logout');
+      await logout();
+      
+      console.log('[Navbar] User state cleared, redirecting to login');
+      window.location.href = "/login";
     } catch (err) {
-      console.error("Navbar: Logout API failed", err);
+      console.error("Navbar: Logout failed", err);
+      // Fallback: clear storage and redirect anyway
+      localStorage.clear();
+      sessionStorage.clear();
+      window.location.href = "/login";
     }
-    
-    // Always redirect regardless of logout API success/failure
-    console.log('[Navbar] Redirecting to login');
-    window.location.replace("/login");
   };
 
   if (loading) {

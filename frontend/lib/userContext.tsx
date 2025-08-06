@@ -15,7 +15,17 @@ export type User = {
   address?: string;
 };
 
-const UserContext = createContext<{ user: User | null; loading: boolean; refreshUser: () => Promise<void> }>({ user: null, loading: true, refreshUser: async () => {} });
+const UserContext = createContext<{ 
+  user: User | null; 
+  loading: boolean; 
+  refreshUser: () => Promise<void>;
+  logout: () => Promise<void>;
+}>({ 
+  user: null, 
+  loading: true, 
+  refreshUser: async () => {}, 
+  logout: async () => {}
+});
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -94,8 +104,26 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     fetchUser();
   }, []);
 
+  const logout = async () => {
+    console.log("UserProvider: logout called - immediately clearing user state");
+    setUser(null);
+    setLoading(false);
+    
+    try {
+      // Call logout API
+      await fetch('/api/logout', { method: 'POST' });
+      console.log("UserProvider: logout API called successfully");
+    } catch (error) {
+      console.error("UserProvider: logout API failed", error);
+    }
+    
+    // Clear storage
+    localStorage.clear();
+    sessionStorage.clear();
+  };
+
 //   console.log("UserProvider: rendering", { user, loading });
-  return <UserContext.Provider value={{ user, loading, refreshUser: fetchUser }}>{children}</UserContext.Provider>;
+  return <UserContext.Provider value={{ user, loading, refreshUser: fetchUser, logout }}>{children}</UserContext.Provider>;
 }
 
 export function useUser() {
