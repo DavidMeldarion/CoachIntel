@@ -44,20 +44,31 @@ export const getUser = cache(async (): Promise<User | null> => {
   if (!session) return null;
 
   try {
-    // For now, return user data from session - later we can enhance this
-    // by calling backend when needed, but for basic navbar functionality this works
+    const response = await fetch(getApiUrl('/me'), {
+      headers: {
+        'Cookie': (await cookies()).toString(),
+      },
+      cache: 'no-store', // Always fetch fresh data
+    });
+
+    if (!response.ok) {
+      console.log(`Backend /me call failed with status: ${response.status}`);
+      return null;
+    }
+
+    const userData = await response.json();
     return {
-      email: session.email,
-      name: session.email.split('@')[0], // Use email prefix as default name
-      first_name: '',
-      last_name: '',
-      fireflies_api_key: '',
-      zoom_jwt: '',
-      phone: '',
-      address: '',
+      email: userData.email,
+      name: userData.name || `${userData.first_name} ${userData.last_name}`.trim() || "User",
+      first_name: userData.first_name,
+      last_name: userData.last_name,
+      fireflies_api_key: userData.fireflies_api_key,
+      zoom_jwt: userData.zoom_jwt,
+      phone: userData.phone,
+      address: userData.address,
     };
   } catch (error) {
-    console.error('Failed to get user data', error);
+    console.error('Failed to fetch user from backend', error);
     return null;
   }
 });
