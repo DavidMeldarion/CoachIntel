@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getUser } from "../lib/dal";
 import LogoutButton from "./LogoutButton";
 import UserDropdown from "./UserDropdown";
+import DebugAuth from "./DebugAuth";
 
 export default async function Navbar() {
   console.log('[NavbarServer] Starting getUser call...');
@@ -10,17 +11,19 @@ export default async function Navbar() {
   console.log('[NavbarServer] User exists?', !!user);
 
   return (
-    <nav className="bg-white shadow-sm border-b border-gray-200">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between h-16">
-          <div className="flex items-center">
-            <Link href="/" className="text-xl font-bold text-blue-700">
-              CoachIntel
-            </Link>
-          </div>
+    <>
+      <DebugAuth />
+      <nav className="bg-white shadow-sm border-b border-gray-200">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between h-16">
+            <div className="flex items-center">
+              <Link href="/" className="text-xl font-bold text-blue-700">
+                CoachIntel
+              </Link>
+            </div>
 
-          <div className="flex items-center space-x-4">
-            {user ? (
+            <div className="flex items-center space-x-4">
+              {user ? (
               <>
                 <div className="hidden md:flex items-center space-x-8">
                   <Link 
@@ -77,5 +80,6 @@ export default async function Navbar() {
         </div>
       </div>
     </nav>
+    </>
   );
 }
