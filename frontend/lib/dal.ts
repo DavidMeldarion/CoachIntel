@@ -17,13 +17,20 @@ export interface User {
 
 // Verify the session and return user data - uses new session cookie only
 export const verifySession = cache(async () => {
+  console.log('[DAL] verifySession starting...');
   const sessionCookie = (await cookies()).get('session')?.value;
+  console.log('[DAL] session cookie exists?', !!sessionCookie);
+  console.log('[DAL] session cookie preview:', sessionCookie ? sessionCookie.substring(0, 20) + '...' : 'none');
+  
   const session = await decrypt(sessionCookie);
+  console.log('[DAL] decrypted session:', session);
 
   if (!session?.userId) {
+    console.log('[DAL] verifySession failed - no userId');
     return null;
   }
 
+  console.log('[DAL] verifySession success - userId:', session.userId, 'email:', session.email);
   return { isAuth: true, userId: session.userId, email: session.email };
 });
 
@@ -40,24 +47,39 @@ export const requireAuth = cache(async () => {
 
 // Get current user data - cached during a single request
 export const getUser = cache(async (): Promise<User | null> => {
+  console.log('[DAL] getUser starting...');
   const session = await verifySession();
-  if (!session) return null;
+  console.log('[DAL] getUser session result:', session);
+  
+  if (!session) {
+    console.log('[DAL] getUser failed - no session');
+    return null;
+  }
 
   try {
+    console.log('[DAL] making backend call to /me...');
+    const allCookies = (await cookies()).toString();
+    console.log('[DAL] sending cookies:', allCookies);
+    
     const response = await fetch(getApiUrl('/me'), {
       headers: {
-        'Cookie': (await cookies()).toString(),
+        'Cookie': allCookies,
       },
       cache: 'no-store', // Always fetch fresh data
     });
 
+    console.log('[DAL] backend response status:', response.status);
+    console.log('[DAL] backend response ok:', response.ok);
+
     if (!response.ok) {
-      console.log(`Backend /me call failed with status: ${response.status}`);
+      console.log(`[DAL] Backend /me call failed with status: ${response.status}`);
       return null;
     }
 
     const userData = await response.json();
-    return {
+    console.log('[DAL] backend user data:', userData);
+    
+    const userResult = {
       email: userData.email,
       name: userData.name || `${userData.first_name} ${userData.last_name}`.trim() || "User",
       first_name: userData.first_name,
@@ -67,8 +89,11 @@ export const getUser = cache(async (): Promise<User | null> => {
       phone: userData.phone,
       address: userData.address,
     };
+    
+    console.log('[DAL] final user result:', userResult);
+    return userResult;
   } catch (error) {
-    console.error('Failed to fetch user from backend', error);
+    console.error('[DAL] Failed to fetch user from backend:', error);
     return null;
   }
 });

@@ -4,7 +4,10 @@ import LogoutButton from "./LogoutButton";
 import UserDropdown from "./UserDropdown";
 
 export default async function Navbar() {
+  console.log('[NavbarServer] Starting getUser call...');
   const user = await getUser();
+  console.log('[NavbarServer] getUser result:', user);
+  console.log('[NavbarServer] User exists?', !!user);
 
   return (
     <nav className="bg-white shadow-sm border-b border-gray-200">

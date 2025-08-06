@@ -20,13 +20,15 @@ export async function encrypt(payload: SessionPayload) {
 }
 
 export async function decrypt(session: string | undefined = '') {
+  console.log('[Session] decrypt called with session:', session ? session.substring(0, 20) + '...' : 'empty');
   try {
     const { payload } = await jwtVerify(session, encodedKey, {
       algorithms: ['HS256'],
     });
+    console.log('[Session] decrypt success, payload:', payload);
     return payload as SessionPayload;
   } catch (error) {
-    console.log('Failed to verify session');
+    console.log('[Session] decrypt failed:', error);
     return null;
   }
 }
