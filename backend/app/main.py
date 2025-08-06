@@ -21,8 +21,17 @@ from sqlalchemy import select
 from app.worker import sync_fireflies_meetings, celery_app, REDIS_URL  # Import Celery task for Fireflies only
 from .config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_TOKEN_URL, GOOGLE_CALENDAR_EVENTS_URL
 
-# Frontend URL configuration
+# Frontend URL configuration with both www and non-www variants
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+# Create both www and non-www variants for CORS
+frontend_origins = [FRONTEND_URL]
+if FRONTEND_URL.startswith("https://"):
+    if "www." in FRONTEND_URL:
+        # If FRONTEND_URL has www, add non-www version
+        frontend_origins.append(FRONTEND_URL.replace("://www.", "://"))
+    else:
+        # If FRONTEND_URL doesn't have www, add www version
+        frontend_origins.append(FRONTEND_URL.replace("://", "://www."))
 
 logger = logging.getLogger("coachintel")
 logger.setLevel(logging.INFO)
@@ -31,11 +40,14 @@ if not logger.hasHandlers():
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(handler)
 
+# Log CORS configuration for debugging
+logger.info(f"CORS configured for origins: {['http://localhost:3000', 'http://127.0.0.1:3000'] + frontend_origins}")
+
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", FRONTEND_URL],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"] + frontend_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
     allow_headers=["*"],
@@ -116,6 +128,19 @@ def root():
 # async def summarize(user: User = Depends(verify_jwt_user)):
 #     # Dummy: Trigger summarization
 #     return {"status": "summarization started"}
+
+@app.get("/session")
+async def get_session(user: User = Depends(verify_jwt_user)):
+    """Get current user session information"""
+    return {
+        "user": {
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "name": f"{user.first_name} {user.last_name}".strip()
+        },
+        "authenticated": True
+    }
 
 @app.get("/external-meetings/{source}/{meeting_id}")
 async def get_meeting_details(

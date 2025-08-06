@@ -54,6 +54,7 @@ GOOGLE_REDIRECT_URI=https://api.coachintel.ai/auth/google/callback
 
 ### Frontend URL (IMPORTANT: Update this!)
 ```
+# Set to your root domain (without www) - the code will automatically add www variant
 FRONTEND_URL=https://coachintel.ai
 ```
 
