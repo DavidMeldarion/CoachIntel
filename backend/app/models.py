@@ -132,6 +132,10 @@ engine = create_async_engine(
         "command_timeout": 30,  # 30 second timeout for commands
         "statement_cache_size": 0,  # Disable prepared statements
         "prepared_statement_cache_size": 0,  # Additional safety
+        "prepared_statement_name_func": None,  # Completely disable prepared statements
+    },
+    execution_options={
+        "compiled_cache": {},  # Disable compiled statement cache
     }
 )
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
