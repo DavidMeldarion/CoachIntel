@@ -15,16 +15,27 @@ export interface User {
   address?: string;
 }
 
-// Verify the session and return user data
+// Verify the session and return user data - does not redirect
 export const verifySession = cache(async () => {
   const cookie = (await cookies()).get('session')?.value;
   const session = await decrypt(cookie);
 
   if (!session?.userId) {
-    redirect('/login');
+    return null;
   }
 
   return { isAuth: true, userId: session.userId, email: session.email };
+});
+
+// Verify session for protected routes - will redirect to login if not authenticated
+export const requireAuth = cache(async () => {
+  const session = await verifySession();
+  
+  if (!session) {
+    redirect('/login');
+  }
+  
+  return session;
 });
 
 // Get current user data - cached during a single request
@@ -41,6 +52,8 @@ export const getUser = cache(async (): Promise<User | null> => {
     });
 
     if (!response.ok) {
+      // If backend call fails, don't throw - just return null
+      // This prevents errors from propagating to the UI
       return null;
     }
 
