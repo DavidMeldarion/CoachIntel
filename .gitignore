@@ -78,6 +78,13 @@ jspm_packages/
 # Optional eslint cache
 .eslintcache
 
+# ESLint configuration (auto-generated)
+.eslintrc.json
+
+# TypeScript build info cache
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
 # Microbundle cache
 .rpt2_cache/
 .rts2_cache_cjs/
