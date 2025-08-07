@@ -519,13 +519,16 @@ async def google_oauth_callback(request: Request, code: str, state: str = None):
         "max_age": 604800,  # 7 days
         "samesite": "lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
         "secure": True if os.getenv("RAILWAY_ENVIRONMENT") else False,
-        "path": "/"
+        "path": "/",
+        "domain": ".coachintel.ai" if os.getenv("RAILWAY_ENVIRONMENT") else None
     }
     
     # Old cookie for backward compatibility
     response.set_cookie(key="user", value=token, **cookie_settings)
     # New session cookie for Next.js best practices
     response.set_cookie(key="session", value=token, **cookie_settings)
+    
+    print(f"[Backend] Cookies set with domain: {cookie_settings.get('domain')}, secure: {cookie_settings['secure']}, samesite: {cookie_settings['samesite']}")
     
     return response
 
@@ -584,7 +587,8 @@ async def logout():
         "max_age": 0,
         "samesite": "lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
         "secure": True if os.getenv("RAILWAY_ENVIRONMENT") else False,
-        "path": "/"
+        "path": "/",
+        "domain": ".coachintel.ai" if os.getenv("RAILWAY_ENVIRONMENT") else None
     }
     
     # Clear both old "user" cookie and new "session" cookie
