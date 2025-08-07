@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(request: NextRequest) {
   return NextResponse.json({ 
-    message: 'NextAuth Debug Info',
+    message: 'NextAuth Debug Info - Updated',
     timestamp: new Date().toISOString(),
     url: request.url,
     headers: {
@@ -12,8 +12,15 @@ export async function GET(request: NextRequest) {
     },
     env: {
       NEXTAUTH_URL: process.env.NEXTAUTH_URL,
+      NEXTAUTH_URL_INTERNAL: process.env.NEXTAUTH_URL_INTERNAL,
       NODE_ENV: process.env.NODE_ENV,
       VERCEL_URL: process.env.VERCEL_URL,
+      GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID ? 'SET' : 'NOT_SET',
+      GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET ? 'SET' : 'NOT_SET',
     },
+    requestInfo: {
+      pathname: new URL(request.url).pathname,
+      origin: new URL(request.url).origin,
+    }
   })
 }

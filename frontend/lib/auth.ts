@@ -2,10 +2,16 @@ import { NextAuthOptions } from "next-auth"
 import GoogleProvider from "next-auth/providers/google"
 import { getApiUrl } from "./apiUrl"
 
-// Fix NEXTAUTH_URL for production monorepo setup
-if (process.env.NODE_ENV === 'production' && process.env.NEXTAUTH_URL === 'https://www.coachintel.ai') {
-  process.env.NEXTAUTH_URL = 'https://www.coachintel.ai/frontend';
+// Aggressive fix for NEXTAUTH_URL in production
+if (process.env.NODE_ENV === 'production') {
+  const correctUrl = 'https://www.coachintel.ai/frontend';
+  if (process.env.NEXTAUTH_URL !== correctUrl) {
+    console.log('[NextAuth] Fixing NEXTAUTH_URL from', process.env.NEXTAUTH_URL, 'to', correctUrl);
+    process.env.NEXTAUTH_URL = correctUrl;
+  }
 }
+
+console.log('[NextAuth] Configuration loading with NEXTAUTH_URL:', process.env.NEXTAUTH_URL);
 
 // Extend NextAuth types to include our custom fields
 declare module 'next-auth' {
