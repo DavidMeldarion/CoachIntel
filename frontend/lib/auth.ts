@@ -4,7 +4,7 @@ import { getApiUrl } from "./apiUrl"
 
 // Aggressive fix for NEXTAUTH_URL in production
 if (process.env.NODE_ENV === 'production') {
-  const correctUrl = 'https://www.coachintel.ai/frontend';
+  const correctUrl = 'https://www.coachintel.ai';
   if (process.env.NEXTAUTH_URL !== correctUrl) {
     console.log('[NextAuth] Fixing NEXTAUTH_URL from', process.env.NEXTAUTH_URL, 'to', correctUrl);
     process.env.NEXTAUTH_URL = correctUrl;
@@ -149,4 +149,5 @@ export const authOptions: NextAuthOptions = {
     },
   },
   debug: true, // Keep debug enabled for now
+}
 }
