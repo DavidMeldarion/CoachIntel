@@ -6,14 +6,13 @@ export default withAuth(
     const { pathname } = req.nextUrl;
     const token = req.nextauth.token;
 
-    // Let login page handle its own redirect to avoid conflicts
     // Routes that should redirect to dashboard if user is authenticated
-    // const publicRoutes = ['/login', '/signup', '/'];
+    const publicRoutes = ['/signup', '/'];
 
     // If user is authenticated and trying to access public routes, redirect to dashboard
-    // if (token && publicRoutes.includes(pathname)) {
-    //   return NextResponse.redirect(new URL('/dashboard', req.url));
-    // }
+    if (token && publicRoutes.includes(pathname)) {
+      return NextResponse.redirect(new URL('/dashboard', req.url));
+    }
 
     // Check for profile completion requirement (optional - can be removed if not needed)
     if (token && pathname !== '/profile/complete-profile') {
@@ -54,5 +53,5 @@ export default withAuth(
 );
 
 export const config = {
-  matcher: ['/((?!api|_next/static|_next/image|favicon.ico|.*\\.png$).*)'],
+  matcher: ['/((?!api|_next/static|_next/image|favicon.ico|.*\\.png$|login|signup).*)'],
 };
