@@ -4,16 +4,10 @@ import { signIn } from "next-auth/react";
 
 export default function GoogleLoginButton() {
   const handleGoogleLogin = () => {
-    // For production, use window.location to redirect directly to correct URL
-    if (process.env.NODE_ENV === 'production') {
-      window.location.href = 'https://www.coachintel.ai/frontend/api/auth/signin/google?callbackUrl=' + 
-        encodeURIComponent('https://www.coachintel.ai/frontend/dashboard');
-    } else {
-      signIn('google', { 
-        callbackUrl: '/dashboard',
-        redirect: true 
-      });
-    }
+    signIn('google', { 
+      callbackUrl: '/dashboard',
+      redirect: true 
+    });
   };
 
   return (

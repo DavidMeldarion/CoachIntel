@@ -52,9 +52,6 @@ export const authOptions: NextAuthOptions = {
           scope: "openid email profile https://www.googleapis.com/auth/calendar.readonly",
           access_type: "offline",
           prompt: "consent",
-          redirect_uri: process.env.NODE_ENV === 'production' 
-            ? 'https://www.coachintel.ai/frontend/api/auth/callback/google'
-            : undefined,
         },
       },
     }),
@@ -66,6 +63,17 @@ export const authOptions: NextAuthOptions = {
     },
     async session(message) {
       console.log('[NextAuth] Session event:', message);
+    },
+  },
+  logger: {
+    error(code, metadata) {
+      console.error('[NextAuth] Error:', code, metadata);
+    },
+    warn(code) {
+      console.warn('[NextAuth] Warning:', code);
+    },
+    debug(code, metadata) {
+      console.log('[NextAuth] Debug:', code, metadata);
     },
   },
   callbacks: {
