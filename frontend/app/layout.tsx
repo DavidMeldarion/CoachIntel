@@ -12,12 +12,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="bg-gray-50">
         <Providers>
           <ClientLayout>
-            <SyncProvider>
-              <Navbar />
-              {children}
-              <SpeedInsights />
-              <Analytics />
-            </SyncProvider>
+            <Navbar />
+            {children}
+            <SpeedInsights />
+            <Analytics />
           </ClientLayout>
         </Providers>
       </body>

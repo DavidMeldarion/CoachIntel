@@ -126,3 +126,4 @@ docker-compose.local.yml
 docker-compose.dev.yml
 llms-full.txt
 supabase-ssl-urls.txt
+.vercel
