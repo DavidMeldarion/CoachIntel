@@ -2,17 +2,6 @@ import { NextAuthOptions } from "next-auth"
 import GoogleProvider from "next-auth/providers/google"
 import { getApiUrl } from "./apiUrl"
 
-// Aggressive fix for NEXTAUTH_URL in production
-if (process.env.NODE_ENV === 'production') {
-  const correctUrl = 'https://www.coachintel.ai';
-  if (process.env.NEXTAUTH_URL !== correctUrl) {
-    console.log('[NextAuth] Fixing NEXTAUTH_URL from', process.env.NEXTAUTH_URL, 'to', correctUrl);
-    process.env.NEXTAUTH_URL = correctUrl;
-  }
-}
-
-console.log('[NextAuth] Configuration loading with NEXTAUTH_URL:', process.env.NEXTAUTH_URL);
-
 // Extend NextAuth types to include our custom fields
 declare module 'next-auth' {
   interface Session {
@@ -53,26 +42,6 @@ export const authOptions: NextAuthOptions = {
       },
     }),
   ],
-  // Add explicit debug logging for URL issues
-  events: {
-    async signIn(message) {
-      console.log('[NextAuth] SignIn event:', message);
-    },
-    async session(message) {
-      console.log('[NextAuth] Session event:', message);
-    },
-  },
-  logger: {
-    error(code, metadata) {
-      console.error('[NextAuth] Error:', code, metadata);
-    },
-    warn(code) {
-      console.warn('[NextAuth] Warning:', code);
-    },
-    debug(code, metadata) {
-      console.log('[NextAuth] Debug:', code, metadata);
-    },
-  },
   callbacks: {
     async jwt({ token, account, user }) {
       // Store Google tokens and sync with backend
@@ -140,10 +109,8 @@ export const authOptions: NextAuthOptions = {
         sameSite: 'lax',
         path: '/',
         secure: process.env.NODE_ENV === 'production',
-        // Remove domain restriction for production debugging
-        // domain: process.env.NODE_ENV === 'production' ? '.coachintel.ai' : undefined,
+        domain: process.env.NODE_ENV === 'production' ? '.coachintel.ai' : undefined,
       },
     },
   },
-  debug: true, // Keep debug enabled for now
 }
