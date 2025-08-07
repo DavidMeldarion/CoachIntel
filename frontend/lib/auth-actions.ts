@@ -96,6 +96,8 @@ export async function login(state: FormState | undefined, formData: FormData): P
 
     const { email, password } = validationResult.data;
 
+    console.log('[Auth] Starting login for:', email);
+
     // Call backend to authenticate user
     const response = await fetch(getApiUrl('/login'), {
       method: 'POST',
@@ -105,8 +107,11 @@ export async function login(state: FormState | undefined, formData: FormData): P
       body: JSON.stringify({ email, password }),
     });
 
+    console.log('[Auth] Backend response status:', response.status);
+
     if (!response.ok) {
       const errorData = await response.json();
+      console.log('[Auth] Backend error:', errorData);
       return {
         errors: {
           general: [errorData.error || 'Invalid email or password']
@@ -115,14 +120,18 @@ export async function login(state: FormState | undefined, formData: FormData): P
     }
 
     const userData = await response.json();
+    console.log('[Auth] Backend user data:', userData);
 
     // Create session - extract user info from response
     const userId = userData.user?.id || userData.user?.email || email;
     const userEmail = userData.user?.email || email;
+    console.log('[Auth] Creating session for userId:', userId, 'email:', userEmail);
+    
     await createSession(userId, userEmail);
+    console.log('[Auth] Session created successfully');
 
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('[Auth] Login error:', error);
     return {
       errors: {
         general: ['An unexpected error occurred. Please try again.']

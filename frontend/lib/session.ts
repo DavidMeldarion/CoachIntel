@@ -34,9 +34,16 @@ export async function decrypt(session: string | undefined = '') {
 }
 
 export async function createSession(userId: string, email: string) {
+  console.log('[Session] createSession called with userId:', userId, 'email:', email);
+  
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+  console.log('[Session] Creating session with expiry:', expiresAt);
+  
   const session = await encrypt({ userId, email, expiresAt: expiresAt.toISOString() });
+  console.log('[Session] Session encrypted, length:', session.length);
+  
   const cookieStore = await cookies();
+  console.log('[Session] Got cookie store');
   
   // Create the new encrypted session cookie
   cookieStore.set('session', session, {
@@ -46,6 +53,8 @@ export async function createSession(userId: string, email: string) {
     sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
     path: '/',
   });
+  
+  console.log('[Session] Session cookie set successfully');
 }
 
 export async function updateSession() {
