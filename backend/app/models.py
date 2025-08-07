@@ -136,7 +136,10 @@ engine = create_async_engine(
     },
     execution_options={
         "compiled_cache": {},  # Disable compiled statement cache
-    }
+        "isolation_level": "AUTOCOMMIT",  # Use autocommit mode for better pgbouncer compatibility
+    },
+    pool_pre_ping=True,  # Verify connections before use
+    pool_recycle=300,  # Recycle connections every 5 minutes
 )
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -148,12 +151,17 @@ sync_engine = create_engine(SYNC_DATABASE_URL)
 SessionLocal = sessionmaker(sync_engine)
 
 async def get_user_by_email(email: str):
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(User).where(User.email == email)
-        )
-        user = result.scalar_one_or_none()
-        return user
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(User).where(User.email == email)
+            )
+            user = result.scalar_one_or_none()
+            return user
+    except Exception as e:
+        print(f"Database error in get_user_by_email for {email}: {e}")
+        # Return None instead of crashing the app
+        return None
 
 async def create_or_update_user(email: str, name: str = None, first_name: str = None, last_name: str = None, fireflies_api_key: str = None, zoom_jwt: str = None, phone: str = None, address: str = None, password: str = None):
     async with AsyncSessionLocal() as session:
