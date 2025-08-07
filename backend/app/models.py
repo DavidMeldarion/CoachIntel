@@ -111,35 +111,45 @@ if not ASYNC_DATABASE_URL:
 if ASYNC_DATABASE_URL.startswith("postgresql://"):
     ASYNC_DATABASE_URL = ASYNC_DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-# Add asyncpg-specific parameters to disable prepared statements for PgBouncer compatibility
+# Add asyncpg-specific parameters to disable prepared statements for Supabase transaction pooler
 if "?" in ASYNC_DATABASE_URL:
-    ASYNC_DATABASE_URL += "&prepared_statement_cache_size=0&statement_cache_size=0"
+    # Add to existing query parameters
+    ASYNC_DATABASE_URL += "&prepared_statement_cache_size=0&statement_cache_size=0&prepared_statement_name_func=&server_side_cursors=false"
 else:
-    ASYNC_DATABASE_URL += "?prepared_statement_cache_size=0&statement_cache_size=0"
+    # Add as new query parameters
+    ASYNC_DATABASE_URL += "?prepared_statement_cache_size=0&statement_cache_size=0&prepared_statement_name_func=&server_side_cursors=false"
 
 print(f"Using async database URL: {ASYNC_DATABASE_URL.split('@')[0]}@[REDACTED]")
 
-# Configure engine for connection pooling compatibility
+# Verify we're using the transaction pooler (port 6543) not direct connection (port 5432)
+if ":5432/" in ASYNC_DATABASE_URL:
+    print("⚠️  WARNING: Using direct connection (port 5432). For Supabase transaction pooler, use port 6543")
+elif ":6543/" in ASYNC_DATABASE_URL:
+    print("✅ Using Supabase transaction pooler (port 6543)")
+else:
+    print("❓ Database port not detected in URL")
+
+# Configure engine specifically for Supabase transaction pooler + Railway
 engine = create_async_engine(
     ASYNC_DATABASE_URL, 
-    echo=True, 
+    echo=False,  # Disable echo in production to reduce logs
     future=True,
-    poolclass=NullPool,  # Disable SQLAlchemy connection pooling to avoid conflicts
+    poolclass=NullPool,  # Critical: No connection pooling with transaction pooler
     connect_args={
-        "server_settings": {
-            "jit": "off",  # Disable JIT for better compatibility
-        },
-        "command_timeout": 30,  # 30 second timeout for commands
+        "command_timeout": 30,
         "statement_cache_size": 0,  # Disable prepared statements
-        "prepared_statement_cache_size": 0,  # Additional safety
-        "prepared_statement_name_func": None,  # Completely disable prepared statements
+        "prepared_statement_cache_size": 0,  # Disable prepared statement cache
+        "server_side_cursors": False,  # Disable server-side cursors
     },
     execution_options={
-        "compiled_cache": {},  # Disable compiled statement cache
-        "isolation_level": "AUTOCOMMIT",  # Use autocommit mode for better pgbouncer compatibility
+        "compiled_cache": {},  # Disable SQLAlchemy's compiled statement cache
+        "autocommit": True,  # Use autocommit mode for transaction pooler
     },
-    pool_pre_ping=True,  # Verify connections before use
-    pool_recycle=300,  # Recycle connections every 5 minutes
+    # Disable all pooling and connection management
+    pool_size=0,
+    max_overflow=0,
+    pool_pre_ping=False,  # Don't ping connections
+    pool_recycle=-1,  # Don't recycle connections
 )
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
