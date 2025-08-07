@@ -42,6 +42,15 @@ export const authOptions: NextAuthOptions = {
       },
     }),
   ],
+  // Add explicit debug logging for URL issues
+  events: {
+    async signIn(message) {
+      console.log('[NextAuth] SignIn event:', message);
+    },
+    async session(message) {
+      console.log('[NextAuth] Session event:', message);
+    },
+  },
   callbacks: {
     async jwt({ token, account, user }) {
       // Store Google tokens and sync with backend
@@ -109,9 +118,10 @@ export const authOptions: NextAuthOptions = {
         sameSite: 'lax',
         path: '/',
         secure: process.env.NODE_ENV === 'production',
-        domain: process.env.NODE_ENV === 'production' ? '.coachintel.ai' : undefined,
+        // Remove domain restriction for production debugging
+        // domain: process.env.NODE_ENV === 'production' ? '.coachintel.ai' : undefined,
       },
     },
   },
-  debug: true, // Temporarily enable to see OAuth errors
+  debug: true, // Keep debug enabled for now
 }
