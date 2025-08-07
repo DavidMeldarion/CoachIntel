@@ -139,7 +139,6 @@ engine = create_async_engine(
         "command_timeout": 30,
         "statement_cache_size": 0,  # Disable prepared statements
         "prepared_statement_cache_size": 0,  # Disable prepared statement cache
-        "server_side_cursors": False,  # Disable server-side cursors
     },
     execution_options={
         "compiled_cache": {},  # Disable SQLAlchemy's compiled statement cache
