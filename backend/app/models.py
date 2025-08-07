@@ -100,35 +100,6 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not ASYNC_DATABASE_URL and not DATABASE_URL:
     raise RuntimeError("DATABASE_URL or ASYNC_DATABASE_URL environment variable is not set")
 
-# If ASYNC_DATABASE_URL is not set, convert DATABASE_URL to async format
-if not ASYNC_DATABASE_URL:
-    if DATABASE_URL.startswith("postgresql://"):
-        ASYNC_DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
-    else:
-        ASYNC_DATABASE_URL = DATABASE_URL
-
-# Ensure async URL uses asyncpg driver
-if ASYNC_DATABASE_URL.startswith("postgresql://"):
-    ASYNC_DATABASE_URL = ASYNC_DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
-
-# Add asyncpg-specific parameters to disable prepared statements for Supabase transaction pooler
-if "?" in ASYNC_DATABASE_URL:
-    # Add to existing query parameters
-    ASYNC_DATABASE_URL += "&prepared_statement_cache_size=0&statement_cache_size=0&prepared_statement_name_func=&server_side_cursors=false"
-else:
-    # Add as new query parameters
-    ASYNC_DATABASE_URL += "?prepared_statement_cache_size=0&statement_cache_size=0&prepared_statement_name_func=&server_side_cursors=false"
-
-print(f"Using async database URL: {ASYNC_DATABASE_URL.split('@')[0]}@[REDACTED]")
-
-# Verify we're using the transaction pooler (port 6543) not direct connection (port 5432)
-if ":5432/" in ASYNC_DATABASE_URL:
-    print("⚠️  WARNING: Using direct connection (port 5432). For Supabase transaction pooler, use port 6543")
-elif ":6543/" in ASYNC_DATABASE_URL:
-    print("✅ Using Supabase transaction pooler (port 6543)")
-else:
-    print("❓ Database port not detected in URL")
-
 # Configure engine specifically for Supabase transaction pooler + Railway
 engine = create_async_engine(
     ASYNC_DATABASE_URL, 
