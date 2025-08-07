@@ -6,18 +6,7 @@
       "use": "@vercel/next"
     }
   ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "frontend/api/$1"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "frontend/$1"
-    }
-  ],
   "env": {
     "NODE_ENV": "production"
-  },
-  "framework": "nextjs"
+  }
 }
