@@ -53,5 +53,6 @@ export default withAuth(
 );
 
 export const config = {
-  matcher: ['/((?!api|_next/static|_next/image|favicon.ico|.*\\.png$|login|signup).*)'],
+  // Temporarily disable middleware entirely to fix redirect loop
+  matcher: ['/middleware-disabled-for-debugging'],
 };
