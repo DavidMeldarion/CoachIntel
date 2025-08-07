@@ -6,7 +6,14 @@
       "use": "@vercel/next"
     }
   ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "frontend/$1"
+    }
+  ],
   "env": {
     "NODE_ENV": "production"
-  }
+  },
+  "framework": "nextjs"
 }
