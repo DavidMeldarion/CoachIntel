@@ -1,10 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { getApiUrl } from "../../../lib/apiUrl";
+import { authenticatedFetch } from "../../../lib/authenticatedFetch";
 
 export default function MeetingTranscriptPage({ params }: { params: { meetingId: string } }) {
   const meetingId = params.meetingId;
+  const { data: session, status } = useSession();
   const [meeting, setMeeting] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -13,28 +16,37 @@ export default function MeetingTranscriptPage({ params }: { params: { meetingId:
   const router = useRouter();
 
   useEffect(() => {
-    async function fetchMeeting() {
-      setLoading(true);
-      setError("");
-      try {
-        const res = await fetch(getApiUrl(`/meetings/${encodeURIComponent(meetingId)}`));
-        if (!res.ok) throw new Error("Failed to fetch meeting");
-        const data = await res.json();
-        setMeeting(data);
-      } catch (err: any) {
-        setError(err.message || "Error loading meeting");
-      } finally {
-        setLoading(false);
-      }
+    // Redirect to login if not authenticated
+    if (status === "loading") return; // Still loading
+    if (status === "unauthenticated") {
+      router.push('/login');
+      return;
     }
-    fetchMeeting();
-  }, [meetingId]);
+    
+    if (status === "authenticated") {
+      const fetchMeeting = async () => {
+        setLoading(true);
+        setError("");
+        try {
+          const res = await authenticatedFetch(`/meetings/${encodeURIComponent(meetingId)}`);
+          if (!res.ok) throw new Error("Failed to fetch meeting");
+          const data = await res.json();
+          setMeeting(data);
+        } catch (err: any) {
+          setError(err.message || "Error loading meeting");
+        } finally {
+          setLoading(false);
+        }
+      };
+      fetchMeeting();
+    }
+  }, [meetingId, status, router]);
 
   async function handleSummarize() {
     setSummarizeLoading(true);
     setSummarizeResult(null);
     try {
-      const res = await fetch(getApiUrl("/summarize-missing-transcripts"), { method: "POST" });
+      const res = await authenticatedFetch("/summarize-missing-transcripts", { method: "POST" });
       const data = await res.json();
       if (res.ok) {
         setSummarizeResult(`Task started: ${data.task_id}`);
@@ -48,7 +60,7 @@ export default function MeetingTranscriptPage({ params }: { params: { meetingId:
     }
   }
 
-  if (loading) {
+  if (status === "loading" || loading) {
     return <div className="flex items-center justify-center py-8"><span className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mr-2"></span>Loading transcript...</div>;
   }
   if (error) {

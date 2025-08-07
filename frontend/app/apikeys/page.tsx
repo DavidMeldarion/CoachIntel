@@ -1,7 +1,8 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { upsertUserProfile } from "../../lib/userApi";
+import { useSession } from "next-auth/react";
+import { authenticatedFetch } from "../../lib/authenticatedFetch";
 
 export default function ApiKeys() {
   const [firefliesKey, setFirefliesKey] = useState("");
@@ -10,17 +11,16 @@ export default function ApiKeys() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const router = useRouter();
+  const { data: session, status: sessionStatus } = useSession();
 
-  // Client-side auth check for extra security
+  // NextAuth session check
   useEffect(() => {
-    if (typeof document !== 'undefined') {
-      const cookies = document.cookie.split(';').map(c => c.trim());
-      const userCookie = cookies.find(c => c.startsWith('user='));
-      if (!userCookie) {
-        router.replace("/login?redirect=/apikeys");
-      }
+    if (sessionStatus === "loading") return; // Still loading
+    if (sessionStatus === "unauthenticated") {
+      router.push('/login');
+      return;
     }
-  }, [router]);
+  }, [sessionStatus, router]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -28,9 +28,17 @@ export default function ApiKeys() {
     setLoading(true);
     setError("");
     try {
-      // Save to backend
-      const email = localStorage.getItem("userEmail") || "";
-      await upsertUserProfile({ email, fireflies_api_key: firefliesKey, zoom_jwt: zoomJwt });
+      // Save to backend using authenticatedFetch
+      await authenticatedFetch("/user", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          fireflies_api_key: firefliesKey,
+          zoom_jwt: zoomJwt,
+        }),
+      });
       // Test Fireflies
       let firefliesOk = false;
       if (firefliesKey) {
@@ -43,8 +51,6 @@ export default function ApiKeys() {
         const res = await fetch(`/api/test-zoom?jwt=${encodeURIComponent(zoomJwt)}`);
         zoomOk = res.ok;
       }
-      if (firefliesKey) localStorage.setItem("firefliesKey", firefliesKey);
-      if (zoomJwt) localStorage.setItem("zoomJwt", zoomJwt);
       setStatus(`Profile saved. Fireflies: ${firefliesOk ? "OK" : "Failed"}, Zoom: ${zoomOk ? "OK" : "Failed"}`);
     } catch (err: any) {
       setError("Error saving profile or testing keys");
@@ -52,6 +58,18 @@ export default function ApiKeys() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // Show loading state for NextAuth
+  if (sessionStatus === "loading") {
+    return (
+      <main className="flex items-center justify-center min-h-screen p-8 bg-gray-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-700 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </main>
+    );
   }
 
   return (

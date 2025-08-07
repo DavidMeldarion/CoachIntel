@@ -1,7 +1,9 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { getApiUrl } from "../../lib/apiUrl";
+import { authenticatedFetch } from "../../lib/authenticatedFetch";
 
 // Define the user profile type
 export type UserProfile = {
@@ -17,6 +19,7 @@ export type UserProfile = {
 
 export default function Profile() {
   const router = useRouter();
+  const { data: session, status } = useSession();
   const [user, setUser] = useState<UserProfile | null>(null);
   const [userLoading, setUserLoading] = useState(true);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -40,10 +43,7 @@ export default function Profile() {
   // Fetch user data using new session approach
   const fetchUser = async () => {
     try {
-      const response = await fetch(getApiUrl("/me"), { 
-        credentials: "include",
-        cache: "no-cache",
-      });
+      const response = await authenticatedFetch("/me");
       if (response.ok) {
         const userData = await response.json();
         const userProfile: UserProfile = {
@@ -73,13 +73,16 @@ export default function Profile() {
   };
 
   useEffect(() => {
-    fetchUser();
-  }, [router]);
-
-  useEffect(() => {
-    // Initialize user data on component mount
-    fetchUser();
-  }, []);
+    // Redirect to login if not authenticated
+    if (status === "loading") return; // Still loading
+    if (status === "unauthenticated") {
+      router.push('/login');
+      return;
+    }
+    if (status === "authenticated") {
+      fetchUser();
+    }
+  }, [status, router]);
 
   useEffect(() => {
     // Don't redirect during loading state - let middleware handle auth
@@ -118,17 +121,13 @@ export default function Profile() {
     setError("");
     setSuccess("");
     try {
-      const res = await fetch(
-        getApiUrl("/user"),
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          credentials: "include",
-          body: JSON.stringify(formData),
-        }
-      );
+      const res = await authenticatedFetch("/user", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(formData),
+      });
 
       if (res.ok) {
         const updatedProfile = await res.json();
@@ -180,7 +179,7 @@ export default function Profile() {
     }
   }
 
-  if (loading) {
+  if (status === "loading" || loading) {
     return (
       <main className="flex items-center justify-center min-h-screen p-8 bg-gray-50">
         <div className="text-center">

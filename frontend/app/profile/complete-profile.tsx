@@ -1,7 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { getApiUrl } from "../../lib/apiUrl";
+import { authenticatedFetch } from "../../lib/authenticatedFetch";
 
 interface User {
   email: string;
@@ -14,6 +16,7 @@ interface User {
 
 export default function CompleteProfile() {
   const router = useRouter();
+  const { data: session, status } = useSession();
   const [user, setUser] = useState<User | null>(null);
   const [userLoading, setUserLoading] = useState(true);
   const [form, setForm] = useState({
@@ -29,10 +32,7 @@ export default function CompleteProfile() {
   // Fetch user data using new session approach
   const fetchUser = async () => {
     try {
-      const response = await fetch(getApiUrl("/me"), { 
-        credentials: "include",
-        cache: "no-cache",
-      });
+      const response = await authenticatedFetch("/me");
       if (response.ok) {
         const userData = await response.json();
         const userProfile: User = {
@@ -60,8 +60,16 @@ export default function CompleteProfile() {
   };
 
   useEffect(() => {
-    fetchUser();
-  }, [router]);
+    // Redirect to login if not authenticated
+    if (status === "loading") return; // Still loading
+    if (status === "unauthenticated") {
+      router.push('/login');
+      return;
+    }
+    if (status === "authenticated") {
+      fetchUser();
+    }
+  }, [status, router]);
 
   useEffect(() => {
     async function fetchProfile() {
@@ -107,19 +115,16 @@ export default function CompleteProfile() {
     }
 
     try {
-      const res = await fetch(
-        getApiUrl("/user"),
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          credentials: "include",
-          body: JSON.stringify({
-            first_name: form.firstName,
-            last_name: form.lastName,
-            fireflies_api_key: form.firefliesKey || null,
-            zoom_jwt: form.zoomJwt || null,
+      const res = await authenticatedFetch("/user", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          first_name: form.firstName,
+          last_name: form.lastName,
+          fireflies_api_key: form.firefliesKey || null,
+          zoom_jwt: form.zoomJwt || null,
           }),
         }
       );
@@ -134,7 +139,7 @@ export default function CompleteProfile() {
     }
   }
 
-  if (loading || userLoading) {
+  if (status === "loading" || loading || userLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-50">
         <div className="text-center">
