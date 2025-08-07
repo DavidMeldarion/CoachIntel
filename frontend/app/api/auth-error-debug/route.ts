@@ -15,7 +15,6 @@ export async function GET(request: NextRequest) {
     fullUrl: request.url,
     env: {
       NEXTAUTH_URL: process.env.NEXTAUTH_URL,
-      NEXTAUTH_URL_INTERNAL: process.env.NEXTAUTH_URL_INTERNAL,
       GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID ? 'SET' : 'NOT_SET',
     },
     possibleIssues: [

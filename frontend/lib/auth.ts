@@ -9,12 +9,9 @@ if (process.env.NODE_ENV === 'production') {
     console.log('[NextAuth] Fixing NEXTAUTH_URL from', process.env.NEXTAUTH_URL, 'to', correctUrl);
     process.env.NEXTAUTH_URL = correctUrl;
   }
-  // Also set NEXTAUTH_URL_INTERNAL to ensure internal NextAuth calls use correct URLs
-  process.env.NEXTAUTH_URL_INTERNAL = correctUrl;
 }
 
 console.log('[NextAuth] Configuration loading with NEXTAUTH_URL:', process.env.NEXTAUTH_URL);
-console.log('[NextAuth] NEXTAUTH_URL_INTERNAL:', process.env.NEXTAUTH_URL_INTERNAL);
 
 // Extend NextAuth types to include our custom fields
 declare module 'next-auth' {
@@ -149,5 +146,4 @@ export const authOptions: NextAuthOptions = {
     },
   },
   debug: true, // Keep debug enabled for now
-}
 }
