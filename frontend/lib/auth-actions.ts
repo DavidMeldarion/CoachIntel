@@ -17,6 +17,37 @@ export interface FormState {
   success?: boolean;
 }
 
+// Handle OAuth token from URL parameter and create session
+export async function handleOAuthToken(token: string) {
+  try {
+    console.log('[Auth Actions] Handling OAuth token creation...');
+    
+    // Validate the token by calling the backend /me endpoint
+    const response = await fetch(getApiUrl('/me'), {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      console.log('[Auth Actions] OAuth token validation failed');
+      throw new Error('Invalid OAuth token');
+    }
+
+    const userData = await response.json();
+    console.log('[Auth Actions] OAuth token validated for user:', userData.email);
+
+    // Create the session with the validated token
+    await createSession(userData.email, userData.email);
+
+    console.log('[Auth Actions] Session created successfully');
+    return { success: true };
+  } catch (error) {
+    console.error('[Auth Actions] OAuth token handling failed:', error);
+    return { success: false, error: 'Authentication failed' };
+  }
+}
+
 export async function signup(state: FormState | undefined, formData: FormData): Promise<FormState> {
   try {
     // Validate form fields using enhanced schema

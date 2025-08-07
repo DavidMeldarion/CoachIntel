@@ -178,20 +178,57 @@ async def verify_jwt_user(request: Request):
     cookie_header = request.headers.get("cookie", "")
     print(f"[Backend] verify_jwt_user - cookie_header: {cookie_header}")
     
-    # Check for new "session" cookie first (Next.js best practices)
+    # Check for NextAuth session token
+    next_auth_token = None
     session_token = None
     user_token = None
     
     for cookie in cookie_header.split(";"):
         cookie = cookie.strip()
-        if cookie.startswith("session="):
-            session_token = cookie.split("session=")[1]
+        if cookie.startswith("next-auth.session-token="):
+            next_auth_token = cookie.split("next-auth.session-token=")[1]
             break
+        elif cookie.startswith("session="):
+            session_token = cookie.split("session=")[1]
         elif cookie.startswith("user="):
             user_token = cookie.split("user=")[1]
     
+    # Try NextAuth token first
+    if next_auth_token:
+        print(f"[Backend] verify_jwt_user - Found NextAuth token: {next_auth_token[:20]}...")
+        try:
+            # NextAuth tokens are JWE (encrypted), so we can't decode them directly
+            # Instead, let's extract user email from the Authorization header if present
+            auth_header = request.headers.get("authorization", "")
+            if auth_header and auth_header.startswith("Bearer "):
+                email = auth_header.split("Bearer ")[1]
+                user = await get_user_by_email(email)
+                if user:
+                    print(f"[Backend] verify_jwt_user - Successfully verified NextAuth user: {user.email}")
+                    return user
+            
+            # Fallback: If no Authorization header, check if we have a user email in a custom header
+            user_email = request.headers.get("x-user-email", "")
+            print(f"[Backend] verify_jwt_user - x-user-email header: '{user_email}'")
+            if user_email:
+                user = await get_user_by_email(user_email)
+                if user:
+                    print(f"[Backend] verify_jwt_user - Successfully verified NextAuth user via header: {user.email}")
+                    return user
+                else:
+                    print(f"[Backend] verify_jwt_user - User not found in database: {user_email}")
+            
+            # If NextAuth token exists but we can't verify the user, return 401
+            print("[Backend] verify_jwt_user - NextAuth token found but no user context")
+            raise HTTPException(status_code=401, detail="NextAuth session found but user verification failed")
+            
+        except Exception as e:
+            print(f"[Backend] verify_jwt_user - NextAuth verification failed: {e}")
+            raise HTTPException(status_code=401, detail="NextAuth session verification failed")
+    
+    # Fallback to legacy JWT verification for existing sessions
     token = session_token or user_token
-    print(f"[Backend] verify_jwt_user - extracted token: {token[:20] if token else None}... (from {'session' if session_token else 'user'} cookie)")
+    print(f"[Backend] verify_jwt_user - extracted legacy token: {token[:20] if token else None}... (from {'session' if session_token else 'user'} cookie)")
     
     if not token:
         print("[Backend] verify_jwt_user - No token found, raising 401")
@@ -205,7 +242,7 @@ async def verify_jwt_user(request: Request):
         user = await get_user_by_email(email)
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
-        print(f"[Backend] verify_jwt_user - Successfully verified user: {user.email}")
+        print(f"[Backend] verify_jwt_user - Successfully verified legacy user: {user.email}")
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
@@ -511,24 +548,12 @@ async def google_oauth_callback(request: Request, code: str, state: str = None):
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode = {"sub": email, "exp": expire, "userId": user.email, "email": email}
     token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    response = RedirectResponse(f"{FRONTEND_URL}/dashboard")
     
-    # Set both old "user" cookie and new "session" cookie for compatibility
-    cookie_settings = {
-        "httponly": True,
-        "max_age": 604800,  # 7 days
-        "samesite": "lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
-        "secure": True if os.getenv("RAILWAY_ENVIRONMENT") else False,
-        "path": "/",
-        "domain": ".coachintel.ai" if os.getenv("RAILWAY_ENVIRONMENT") else None
-    }
+    # Instead of setting cookies in the backend redirect, redirect with token parameter
+    # The frontend will create the session from this token
+    response = RedirectResponse(f"{FRONTEND_URL}/dashboard?auth_token={token}")
     
-    # Old cookie for backward compatibility
-    response.set_cookie(key="user", value=token, **cookie_settings)
-    # New session cookie for Next.js best practices
-    response.set_cookie(key="session", value=token, **cookie_settings)
-    
-    print(f"[Backend] Cookies set with domain: {cookie_settings.get('domain')}, secure: {cookie_settings['secure']}, samesite: {cookie_settings['samesite']}")
+    print(f"[Backend] OAuth success - redirecting to frontend with token for user: {email}")
     
     return response
 
@@ -575,6 +600,81 @@ async def get_calendar_events(user: User = Depends(verify_jwt_user)):
         events = resp.json().get("items", [])
     return {"events": events}
     
+@app.post("/auth/nextauth-sync")
+async def nextauth_sync(request: Request):
+    """Sync NextAuth session data with backend database"""
+    try:
+        data = await request.json()
+        email = data.get("email")
+        name = data.get("name", "")
+        google_access_token = data.get("googleAccessToken")
+        google_refresh_token = data.get("googleRefreshToken")
+        google_token_expiry_str = data.get("googleTokenExpiry")
+        
+        if not email:
+            raise HTTPException(status_code=400, detail="Email is required")
+        
+        print(f"[Backend] NextAuth sync for user: {email}")
+        
+        # Parse expiry date
+        google_token_expiry = None
+        if google_token_expiry_str:
+            try:
+                # Parse the datetime with timezone and convert to UTC naive datetime
+                google_token_expiry = datetime.fromisoformat(google_token_expiry_str.replace('Z', '+00:00'))
+                # Convert to UTC and remove timezone info for database storage
+                google_token_expiry = google_token_expiry.utctimetuple()
+                google_token_expiry = datetime(*google_token_expiry[:6])
+            except ValueError:
+                print(f"[Backend] Invalid expiry date format: {google_token_expiry_str}")
+        
+        # Split name into first/last
+        name_parts = name.strip().split(' ', 1) if name else ['', '']
+        first_name = name_parts[0] if name_parts else ''
+        last_name = name_parts[1] if len(name_parts) > 1 else ''
+        
+        # Get or create user
+        user = await get_user_by_email(email)
+        if user:
+            print(f"[Backend] Updating existing user: {email}")
+            # Update existing user with new Google tokens
+            if google_access_token:
+                user.set_google_tokens(google_access_token, google_refresh_token, google_token_expiry)
+            # Update name if provided
+            if first_name:
+                user.first_name = first_name
+            if last_name:
+                user.last_name = last_name
+            
+            async with AsyncSessionLocal() as session:
+                session.add(user)
+                await session.commit()
+        else:
+            print(f"[Backend] Creating new user: {email}")
+            # Create new user
+            user = User(
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                fireflies_api_key=None,
+                zoom_jwt=None,
+                phone=None,
+                address=None
+            )
+            if google_access_token:
+                user.set_google_tokens(google_access_token, google_refresh_token, google_token_expiry)
+            
+            async with AsyncSessionLocal() as session:
+                session.add(user)
+                await session.commit()
+        
+        print(f"[Backend] NextAuth sync completed for user: {email}")
+        return {"success": True, "message": "User synced successfully"}
+        
+    except Exception as e:
+        print(f"[Backend] NextAuth sync error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+
 @app.post("/logout")
 async def logout():
     """Clear the authentication cookies"""
@@ -585,7 +685,7 @@ async def logout():
     cookie_clear_settings = {
         "httponly": True,
         "max_age": 0,
-        "samesite": "lax" if not os.getenv("RAILWAY_ENVIRONMENT") else "strict",
+        "samesite": "lax",  # Use lax for both dev and prod for better compatibility
         "secure": True if os.getenv("RAILWAY_ENVIRONMENT") else False,
         "path": "/",
         "domain": ".coachintel.ai" if os.getenv("RAILWAY_ENVIRONMENT") else None
@@ -623,24 +723,43 @@ async def options_user():
 
 @app.put("/user")  # Remove response_model to avoid serialization issues
 async def update_user_profile(request: Request):
-    # Extract JWT token from cookie
+    # Extract NextAuth session token or user email from headers
     cookie_header = request.headers.get("cookie", "")
-    token = None
-    for cookie in cookie_header.split(";"):
-        if "user=" in cookie:
-            token = cookie.split("user=")[1].strip()
-            break
+    user_email = request.headers.get("x-user-email", "")
     
-    if not token:
-        raise HTTPException(status_code=401, detail="No authentication token")
+    # Check for NextAuth session token first
+    next_auth_token = None
+    legacy_token = None
+    
+    for cookie in cookie_header.split(";"):
+        cookie = cookie.strip()
+        if cookie.startswith("next-auth.session-token="):
+            next_auth_token = cookie.split("next-auth.session-token=")[1]
+            break
+        elif cookie.startswith("user="):
+            legacy_token = cookie.split("user=")[1]
+    
+    email = None
+    
+    # Try NextAuth authentication first
+    if next_auth_token and user_email:
+        email = user_email
+        print(f"[Backend] update_user_profile - Using NextAuth session for user: {email}")
+    elif legacy_token:
+        # Fallback to legacy JWT verification
+        try:
+            payload = jwt.decode(legacy_token, SECRET_KEY, algorithms=[ALGORITHM])
+            email = payload.get("sub")
+            print(f"[Backend] update_user_profile - Using legacy JWT for user: {email}")
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token expired")
+        except jwt.InvalidTokenError:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    
+    if not email:
+        raise HTTPException(status_code=401, detail="No authentication token or user email")
     
     try:
-        # Decode JWT token
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email = payload.get("sub")
-        if not email:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        
         # Get request data
         data = await request.json()
         
@@ -666,10 +785,9 @@ async def update_user_profile(request: Request):
             "phone": user.phone,
             "address": user.address
         }
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    except Exception as e:
+        print(f"[Backend] update_user_profile - Error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update user profile")
 
 @app.get("/meetings/")
 async def get_user_meetings(user: User = Depends(verify_jwt_user)):

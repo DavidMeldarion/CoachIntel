@@ -2,8 +2,10 @@
 
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useSession } from 'next-auth/react';
 import { useSync } from "../../lib/syncContext";
 import { getApiUrl } from "../../lib/apiUrl";
+import { authenticatedFetch } from "../../lib/authenticatedFetch";
 
 interface User {
   email: string;
@@ -17,9 +19,10 @@ interface User {
 }
 
 function Dashboard() {
+  const { data: session, status } = useSession();
   const { triggerSync } = useSync();
   const [user, setUser] = useState<User | null>(null);
-  const [userLoading, setUserLoading] = useState(true);
+  const userLoading = status === "loading";
   const [upcomingMeetings, setUpcomingMeetings] = useState<any[]>([]);
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [meetingStats, setMeetingStats] = useState({ total: 0, week: 0, month: 0, byType: {} as Record<string, number> });
@@ -29,19 +32,25 @@ function Dashboard() {
   const [showReconnect, setShowReconnect] = useState(false);
   const [error, setError] = useState("");
 
-  // Fetch user data using new session approach
+  // Redirect to login if not authenticated
   useEffect(() => {
+    if (status === "unauthenticated") {
+      window.location.href = '/login';
+    }
+  }, [status]);
+
+  // Fetch user data from backend when session is available
+  useEffect(() => {
+    if (!session?.user || status === "loading") return;
+
     async function fetchUser() {
       try {
-        const response = await fetch(getApiUrl("/me"), { 
-          credentials: "include",
-          cache: "no-cache",
-        });
+        const response = await authenticatedFetch("/me");
         if (response.ok) {
           const userData = await response.json();
           setUser({
             email: userData.email,
-            name: userData.name || `${userData.first_name} ${userData.last_name}`.trim() || "User",
+            name: userData.name || `${userData.first_name} ${userData.last_name}`.trim() || session.user.name || "User",
             first_name: userData.first_name,
             last_name: userData.last_name,
             fireflies_api_key: userData.fireflies_api_key,
@@ -50,19 +59,25 @@ function Dashboard() {
             address: userData.address,
           });
         } else {
-          // Redirect to login if not authenticated
-          window.location.href = '/login';
+          console.error('Failed to fetch user from backend:', response.status);
+          // Use session data as fallback
+          setUser({
+            email: session.user.email || "",
+            name: session.user.name || "User",
+          });
         }
       } catch (error) {
         console.error('Failed to fetch user:', error);
-        window.location.href = '/login';
-      } finally {
-        setUserLoading(false);
+        // Use session data as fallback
+        setUser({
+          email: session.user.email || "",
+          name: session.user.name || "User",
+        });
       }
     }
     
     fetchUser();
-  }, []);
+  }, [session, status]);
 
   useEffect(() => {
     async function fetchData() {
@@ -70,7 +85,7 @@ function Dashboard() {
       setError("");
       try {
         // Fetch meetings
-        const meetingsRes = await fetch(getApiUrl("/meetings"), { credentials: "include" });
+        const meetingsRes = await authenticatedFetch("/meetings");
         if (!meetingsRes.ok) throw new Error("Failed to fetch meetings");
         const meetingsData = await meetingsRes.json();
         const meetings = meetingsData.meetings || [];
@@ -78,10 +93,10 @@ function Dashboard() {
         // Fetch Google Calendar events
         let calendarEvents: any[] = [];
         try {
-          const calRes = await fetch(getApiUrl("/calendar/events"), { credentials: "include" });
+          const calRes = await authenticatedFetch("/calendar/events");
           if (calRes.status === 401) {
             console.log("Logging out for 401")
-            await fetch(getApiUrl('/logout'), { method: 'POST' });
+            await authenticatedFetch('/logout', { method: 'POST' });
             localStorage.clear();
             sessionStorage.clear();
             window.location.href = "/login";
@@ -158,9 +173,9 @@ function Dashboard() {
     setSyncing(true);
     setSyncError("");
     try {
-      const res = await fetch(getApiUrl("/calendar/events"), { credentials: "include" });
+      const res = await authenticatedFetch("/calendar/events");
       if (res.status === 401) {
-                await fetch(getApiUrl('/logout'), { method: 'POST' });
+                await authenticatedFetch('/logout', { method: 'POST' });
         localStorage.clear();
         sessionStorage.clear();
         window.location.href = "/login";
@@ -201,7 +216,7 @@ function Dashboard() {
   async function refetchMeetings() {
     setLoading(true);
     try {
-      const meetingsRes = await fetch(getApiUrl("/meetings"), { credentials: "include" });
+      const meetingsRes = await authenticatedFetch("/meetings");
       const meetingsData = await meetingsRes.json();
       const meetings = meetingsData.meetings || [];
       // Recent activity: last 5 meetings (by date desc)
@@ -242,10 +257,9 @@ function Dashboard() {
     setSyncError("");
     try {
       // Start sync and get task_id
-      const res = await fetch(getApiUrl("/sync/external-meetings"), {
+      const res = await authenticatedFetch("/sync/external-meetings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({ source: "fireflies" })
       });
       const data = await res.json();
@@ -266,7 +280,7 @@ function Dashboard() {
       let pollCount = 0;
       while (status !== "SUCCESS" && status !== "FAILURE" && pollCount < 30) {
         await new Promise(r => setTimeout(r, 2000)); // 2s delay between polls
-        const statusRes = await fetch(getApiUrl(`/sync/status/${data.task_id}?_=${Date.now()}_${Math.random()}`));
+        const statusRes = await authenticatedFetch(`/sync/status/${data.task_id}?_=${Date.now()}_${Math.random()}`);
         const statusData = await statusRes.json();
         // console.log("[DASHBOARD SYNC] Polled status:", statusData);
         status = statusData.status;

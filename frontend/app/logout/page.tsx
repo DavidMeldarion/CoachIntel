@@ -1,22 +1,23 @@
 "use client";
 import { useEffect } from 'react';
-import { logout } from '../../lib/auth-actions';
+import { signOut } from 'next-auth/react';
 
 export default function LogoutPage() {
   
   useEffect(() => {
     const performLogout = async () => {
-      console.log('[LogoutPage] Starting logout process');
+      console.log('[LogoutPage] Starting NextAuth logout process');
       
       try {
-        // Use Server Action logout function
-        console.log('[LogoutPage] Calling Server Action logout');
-        await logout();
+        // Use NextAuth signOut function
+        console.log('[LogoutPage] Calling NextAuth signOut');
+        await signOut({
+          callbackUrl: '/login',
+          redirect: true
+        });
       } catch (error) {
         console.error('[LogoutPage] Logout failed:', error);
-        // Fallback: clear storage and redirect anyway
-        localStorage.clear();
-        sessionStorage.clear();
+        // Fallback: redirect to login anyway
         window.location.href = '/login';
       }
     };

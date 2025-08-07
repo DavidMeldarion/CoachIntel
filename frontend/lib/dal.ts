@@ -18,8 +18,16 @@ export interface User {
 // Verify the session and return user data - uses new session cookie only
 export const verifySession = cache(async () => {
   console.log('[DAL] verifySession starting...');
-  const sessionCookie = (await cookies()).get('session')?.value;
+  
+  // Debug: Log all available cookies
+  const allCookies = await cookies();
+  const cookieNames = Array.from(allCookies.getAll()).map(c => c.name);
+  console.log('[DAL] All available cookies:', cookieNames);
+  
+  const sessionCookie = allCookies.get('session')?.value;
+  const userCookie = allCookies.get('user')?.value;
   console.log('[DAL] session cookie exists?', !!sessionCookie);
+  console.log('[DAL] user cookie exists?', !!userCookie);
   console.log('[DAL] session cookie preview:', sessionCookie ? sessionCookie.substring(0, 20) + '...' : 'none');
   
   const session = await decrypt(sessionCookie);
