@@ -1,9 +1,9 @@
 'use client';
 
 import Link from "next/link";
-import { Suspense, useEffect } from "react";
+import { Suspense } from "react";
 import { useSession } from "next-auth/react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import GoogleLoginButton from "../../components/GoogleLoginButton";
 import { AuthErrorBoundary } from "../../components/ErrorBoundary";
 import { LoadingOverlay } from "../../components/LoadingStates";
@@ -11,25 +11,30 @@ import { LoadingOverlay } from "../../components/LoadingStates";
 function LoginPageContent() {
   const { data: session, status } = useSession();
   const searchParams = useSearchParams();
-  const router = useRouter();
   const error = searchParams.get('error');
 
-  useEffect(() => {
-    // If authenticated, redirect immediately
-    if (status === 'authenticated' && session) {
-      console.log('[LoginPage] User authenticated, redirecting to dashboard');
-      router.replace('/dashboard');
+  // Simple, immediate redirect for authenticated users
+  if (status === 'authenticated' && session) {
+    console.log('[LoginPage] User authenticated, forcing redirect');
+    
+    // Force immediate redirect without waiting for React lifecycle
+    if (typeof window !== 'undefined') {
+      window.location.href = '/dashboard';
     }
-  }, [status, session, router]);
+    
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen">
+        <LoadingOverlay message="Authenticated! Redirecting..." />
+        <p className="mt-4 text-sm text-gray-600">
+          If you&apos;re not redirected, <a href="/dashboard" className="text-blue-600 underline">click here</a>
+        </p>
+      </div>
+    );
+  }
 
   // Show loading while checking authentication
   if (status === 'loading') {
     return <LoadingOverlay message="Checking authentication..." />;
-  }
-
-  // If authenticated, show loading while redirecting
-  if (status === 'authenticated') {
-    return <LoadingOverlay message="Redirecting to dashboard..." />;
   }
 
   return (
