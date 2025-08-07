@@ -53,6 +53,5 @@ export default withAuth(
 );
 
 export const config = {
-  // Temporarily disable middleware to test NextAuth
-  matcher: ['/test-middleware-disabled'],
+  matcher: ['/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\.png$).*)'],
 };
