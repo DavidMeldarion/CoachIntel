@@ -145,11 +145,7 @@ engine = create_async_engine(
         "compiled_cache": {},  # Disable SQLAlchemy's compiled statement cache
         "autocommit": True,  # Use autocommit mode for transaction pooler
     },
-    # Disable all pooling and connection management
-    pool_size=0,
-    max_overflow=0,
-    pool_pre_ping=False,  # Don't ping connections
-    pool_recycle=-1,  # Don't recycle connections
+    # Note: pool_size, max_overflow, pool_pre_ping, pool_recycle are not valid with NullPool
 )
 AsyncSessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
