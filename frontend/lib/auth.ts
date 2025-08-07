@@ -52,6 +52,9 @@ export const authOptions: NextAuthOptions = {
           scope: "openid email profile https://www.googleapis.com/auth/calendar.readonly",
           access_type: "offline",
           prompt: "consent",
+          redirect_uri: process.env.NODE_ENV === 'production' 
+            ? 'https://www.coachintel.ai/frontend/api/auth/callback/google'
+            : undefined,
         },
       },
     }),
