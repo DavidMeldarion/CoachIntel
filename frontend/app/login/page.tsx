@@ -1,37 +1,29 @@
 'use client';
 
 import Link from "next/link";
-import { Suspense, useEffect } from "react";
+import { Suspense } from "react";
 import { useSession } from "next-auth/react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import GoogleLoginButton from "../../components/GoogleLoginButton";
 import { AuthErrorBoundary } from "../../components/ErrorBoundary";
 import { LoadingOverlay } from "../../components/LoadingStates";
 
 function LoginPageContent() {
   const { data: session, status } = useSession();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const error = searchParams.get('error');
-  const callbackUrl = searchParams.get('callbackUrl');
 
-  useEffect(() => {
-    // If user is already authenticated, redirect to dashboard or callback URL
-    if (status === 'authenticated' && session) {
-      const redirectTo = callbackUrl || '/dashboard';
-      console.log('[LoginPage] User already authenticated, redirecting to:', redirectTo);
-      router.push(redirectTo);
-    }
-  }, [session, status, router, callbackUrl]);
-
+  // Don't do client-side redirect - let middleware handle it
+  // Just show loading for authenticated users while middleware redirects
+  
   // Show loading while checking authentication
   if (status === 'loading') {
     return <LoadingOverlay message="Checking authentication..." />;
   }
 
-  // If authenticated, show loading while redirecting
+  // If authenticated, show loading and let middleware handle redirect
   if (status === 'authenticated') {
-    return <LoadingOverlay message="Redirecting..." />;
+    return <LoadingOverlay message="Authenticated - redirecting..." />;
   }
 
   return (
