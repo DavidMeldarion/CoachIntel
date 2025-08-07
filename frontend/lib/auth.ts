@@ -113,5 +113,5 @@ export const authOptions: NextAuthOptions = {
       },
     },
   },
-  debug: false,
+  debug: true, // Temporarily enable to see OAuth errors
 }
