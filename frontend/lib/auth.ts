@@ -44,10 +44,12 @@ export const authOptions: NextAuthOptions = {
   ],
   callbacks: {
     async jwt({ token, account, user }) {
-      // Store Google tokens and sync with backend
+      // Store Google tokens - SIMPLIFIED FOR DEBUGGING
       if (account && user) {
-        console.log('[NextAuth] New login - syncing with backend...');
+        console.log('[NextAuth] New login - backend sync temporarily disabled');
         
+        // TODO: Re-enable backend sync after NextAuth routes are working
+        /*
         try {
           // Use internal Docker network URL for backend communication
           const backendUrl = process.env.NODE_ENV === 'development' 
@@ -77,6 +79,7 @@ export const authOptions: NextAuthOptions = {
         } catch (error) {
           console.error('[NextAuth] Backend sync error:', error);
         }
+        */
 
         // Store tokens in JWT
         token.accessToken = account.access_token;
@@ -111,9 +114,10 @@ export const authOptions: NextAuthOptions = {
         sameSite: 'lax',
         path: '/',
         secure: process.env.NODE_ENV === 'production',
-        domain: process.env.NODE_ENV === 'production' ? '.coachintel.ai' : undefined,
+        // Temporarily remove domain to test
+        // domain: process.env.NODE_ENV === 'production' ? '.coachintel.ai' : undefined,
       },
     },
   },
-  debug: process.env.NODE_ENV === 'development',
+  debug: true, // Enable debug in production for troubleshooting
 }
