@@ -1,9 +1,9 @@
 'use client';
 
 import Link from "next/link";
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import { useSession } from "next-auth/react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import GoogleLoginButton from "../../components/GoogleLoginButton";
 import { AuthErrorBoundary } from "../../components/ErrorBoundary";
 import { LoadingOverlay } from "../../components/LoadingStates";
@@ -11,30 +11,23 @@ import { LoadingOverlay } from "../../components/LoadingStates";
 function LoginPageContent() {
   const { data: session, status } = useSession();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const error = searchParams.get('error');
+  const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
 
-  // Simple, immediate redirect for authenticated users
-  if (status === 'authenticated' && session) {
-    console.log('[LoginPage] User authenticated, forcing redirect');
-    
-    // Force immediate redirect without waiting for React lifecycle
-    if (typeof window !== 'undefined') {
-      window.location.href = '/dashboard';
+  // Redirect authenticated users
+  useEffect(() => {
+    if (status === 'authenticated' && session) {
+      // Use Next.js router for proper navigation
+      router.replace(callbackUrl);
     }
-    
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen">
-        <LoadingOverlay message="Authenticated! Redirecting..." />
-        <p className="mt-4 text-sm text-gray-600">
-          If you&apos;re not redirected, <a href="/dashboard" className="text-blue-600 underline">click here</a>
-        </p>
-      </div>
-    );
-  }
+  }, [status, session, router, callbackUrl]);
 
-  // Show loading while checking authentication
-  if (status === 'loading') {
-    return <LoadingOverlay message="Checking authentication..." />;
+  // Show loading while checking authentication or redirecting
+  if (status === 'loading' || (status === 'authenticated' && session)) {
+    return <LoadingOverlay message={
+      status === 'loading' ? "Checking authentication..." : "Redirecting to dashboard..."
+    } />;
   }
 
   return (
@@ -45,15 +38,19 @@ function LoginPageContent() {
         {error && (
           <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 max-w-md">
             <p className="text-sm">
-              <strong>Authentication Error:</strong> {error}
+              <strong>Authentication Error:</strong> {
+                error === 'CredentialsSignin' ? 'Invalid credentials. Please try again.' :
+                error === 'OAuthSignin' ? 'Error connecting to Google. Please try again.' :
+                error === 'OAuthCallback' ? 'Error during authentication. Please try again.' :
+                error
+              }
             </p>
-            <p className="text-xs mt-1">Please try logging in again.</p>
           </div>
         )}
         
         <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-md flex flex-col gap-6 border border-gray-100">
           {/* Google OAuth Login with NextAuth */}
-          <GoogleLoginButton />
+          <GoogleLoginButton callbackUrl={callbackUrl} />
           
           <Link
             href="/signup"

@@ -100,6 +100,11 @@ export const authOptions: NextAuthOptions = {
   session: {
     strategy: 'jwt',
     maxAge: 7 * 24 * 60 * 60, // 7 days
+    updateAge: 24 * 60 * 60, // Update session every 24 hours
+  },
+  jwt: {
+    maxAge: 7 * 24 * 60 * 60, // 7 days
+    secret: process.env.NEXTAUTH_SECRET,
   },
   cookies: {
     sessionToken: {
@@ -111,6 +116,27 @@ export const authOptions: NextAuthOptions = {
         secure: process.env.NODE_ENV === 'production',
         domain: process.env.NODE_ENV === 'production' ? '.coachintel.ai' : undefined,
       },
+    },
+    callbackUrl: {
+      name: 'next-auth.callback-url',
+      options: {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        secure: process.env.NODE_ENV === 'production',
+      },
+    },
+  },
+  events: {
+    async signIn({ user, account, profile }) {
+      console.log(`[NextAuth] User signed in: ${user.email}`);
+    },
+    async signOut({ token }) {
+      console.log(`[NextAuth] User signed out`);
+    },
+    async session({ session, token }) {
+      // Log session access for security monitoring
+      console.log(`[NextAuth] Session accessed for user: ${session.user?.email}`);
     },
   },
 }

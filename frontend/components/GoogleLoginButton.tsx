@@ -2,10 +2,14 @@
 
 import { signIn } from "next-auth/react";
 
-export default function GoogleLoginButton() {
+interface GoogleLoginButtonProps {
+  callbackUrl?: string;
+}
+
+export default function GoogleLoginButton({ callbackUrl = '/dashboard' }: GoogleLoginButtonProps) {
   const handleGoogleLogin = () => {
     signIn('google', { 
-      callbackUrl: '/dashboard',
+      callbackUrl,
       redirect: true 
     });
   };
