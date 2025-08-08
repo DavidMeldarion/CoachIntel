@@ -41,7 +41,7 @@ export default function Home() {
           <div className="mx-auto max-w-2xl lg:text-center">
             <h2 className="text-base font-semibold leading-7 text-blue-600">The Problem</h2>
             <p className="mt-2 text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl">
-              Personal training shouldn't be buried in paperwork
+              Personal training shouldn&apos;t be buried in paperwork
             </p>
           </div>
           
@@ -94,7 +94,7 @@ export default function Home() {
             </h3>
             <p className="mt-6 text-lg leading-8 text-gray-600">
               Our AI automatically captures, organizes, and analyzes your training sessions, 
-              giving you more time to focus on what you do best - transforming your clients' fitness journeys.
+              giving you more time to focus on what you do best - transforming your clients&apos; fitness journeys.
             </p>
           </div>
         </div>
@@ -141,7 +141,7 @@ export default function Home() {
                 <dd className="mt-4 flex flex-auto flex-col text-base leading-7 text-gray-600">
                   <p className="flex-auto">
                     AI analyzes your sessions to create comprehensive client fitness profiles, tracking workout progress, 
-                    goals, and breakthrough moments so you're always prepared for the next training session.
+                    goals, and breakthrough moments so you&apos;re always prepared for the next training session.
                   </p>
                 </dd>
               </div>
@@ -202,9 +202,9 @@ export default function Home() {
                 <figure>
                   <blockquote className="text-gray-900">
                     <p>
-                      "CoachIntel has transformed how I manage my client relationships. 
+                      &quot;CoachIntel has transformed how I manage my client relationships. 
                       I save 3-4 hours per week on admin work and my clients love the 
-                      detailed session summaries and progress tracking I can now provide."
+                      detailed session summaries and progress tracking I can now provide.&quot;
                     </p>
                   </blockquote>
                   <figcaption className="mt-6 flex items-center gap-x-4">
@@ -223,9 +223,9 @@ export default function Home() {
                 <figure>
                   <blockquote className="text-gray-900">
                     <p>
-                      "The AI insights are incredibly accurate. It picks up on training patterns 
+                      &quot;The AI insights are incredibly accurate. It picks up on training patterns 
                       I sometimes miss and suggests workout modifications that have led to 
-                      amazing results with my clients."
+                      amazing results with my clients.&quot;
                     </p>
                   </blockquote>
                   <figcaption className="mt-6 flex items-center gap-x-4">
@@ -244,9 +244,9 @@ export default function Home() {
                 <figure>
                   <blockquote className="text-gray-900">
                     <p>
-                      "Setup was incredibly easy - connected my existing tools in minutes. 
+                      &quot;Setup was incredibly easy - connected my existing tools in minutes. 
                       Now every training session is automatically organized and I never miss 
-                      important client milestones or follow-ups."
+                      important client milestones or follow-ups.&quot;
                     </p>
                   </blockquote>
                   <figcaption className="mt-6 flex items-center gap-x-4">
@@ -277,14 +277,14 @@ export default function Home() {
             </p>
           </div>
           
-          <div className="mx-auto mt-16 max-w-2xl rounded-3xl ring-1 ring-gray-200 sm:mt-20 lg:mx-0 lg:flex lg:max-w-none">
+          <div className="mx-auto mt-16 max-w-2xl rounded-3xl ring-1 ring-gray-200 sm:mt-20 lg:mx-0 lg:max-w-none">
             <div className="p-8 sm:p-10 lg:flex-auto">
               <h3 className="text-2xl font-bold tracking-tight text-gray-900">Early Adopter Plan</h3>
               <p className="mt-6 text-base leading-7 text-gray-600">
                 Everything you need to transform your personal training practice with AI-powered automation.
               </p>
               <div className="mt-10 flex items-center gap-x-4">
-                <h4 className="flex-none text-sm font-semibold leading-6 text-blue-600">What's included</h4>
+                <h4 className="flex-none text-sm font-semibold leading-6 text-blue-600">What&apos;s included</h4>
                 <div className="h-px flex-auto bg-gray-100"></div>
               </div>
               <ul className="mt-8 grid grid-cols-1 gap-4 text-sm leading-6 text-gray-600 sm:grid-cols-2 sm:gap-6">
@@ -304,13 +304,13 @@ export default function Home() {
                   <svg className="h-6 w-5 flex-none text-blue-600" viewBox="0 0 20 20" fill="currentColor">
                     <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
                   </svg>
-                  Coaching insights & suggestions
+                  Coaching insights &amp; suggestions
                 </li>
                 <li className="flex gap-x-3">
                   <svg className="h-6 w-5 flex-none text-blue-600" viewBox="0 0 20 20" fill="currentColor">
                     <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
                   </svg>
-                  Calendar & tool integrations
+                  Calendar &amp; tool integrations
                 </li>
                 <li className="flex gap-x-3">
                   <svg className="h-6 w-5 flex-none text-blue-600" viewBox="0 0 20 20" fill="currentColor">
@@ -412,7 +412,7 @@ export default function Home() {
                 Can I cancel anytime?
               </dt>
               <dd className="mt-2 text-base leading-7 text-gray-600">
-                Absolutely. No contracts, no cancellation fees. If you're not satisfied, 
+                Absolutely. No contracts, no cancellation fees. If you&apos;re not satisfied, 
                 you can cancel with one click. Early adopters who choose to stay keep their 
                 discounted rate forever.
               </dd>

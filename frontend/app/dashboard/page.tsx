@@ -361,7 +361,7 @@ function Dashboard() {
             {/* 1. Welcome Header */}
             <div className="flex flex-col items-center mb-4">
               <h3 className="text-xl font-semibold text-gray-800">Welcome, {user?.name || "User"}!</h3>
-              <p className="text-gray-600 mt-1">Here's a quick summary of your activity.</p>
+              <p className="text-gray-600 mt-1">Here&apos;s a quick summary of your activity.</p>
             </div>
             {/* Quick Actions */}
             <div className="flex gap-4 mb-6">

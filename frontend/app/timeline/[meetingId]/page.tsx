@@ -1,12 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { getApiUrl } from "../../../lib/apiUrl";
 import { authenticatedFetch } from "../../../lib/authenticatedFetch";
 
-export default function MeetingTranscriptPage({ params }: { params: { meetingId: string } }) {
-  const meetingId = params.meetingId;
+export default function MeetingTranscriptPage() {
+  const { meetingId } = useParams<{ meetingId: string }>();
   const { data: session, status } = useSession();
   const [meeting, setMeeting] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -38,7 +37,7 @@ export default function MeetingTranscriptPage({ params }: { params: { meetingId:
           setLoading(false);
         }
       };
-      fetchMeeting();
+      if (meetingId) fetchMeeting();
     }
   }, [meetingId, status, router]);
 

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { authenticatedFetch } from "../../lib/authenticatedFetch";
@@ -40,7 +40,7 @@ export default function Profile() {
   const [testingFireflies, setTestingFireflies] = useState(false);
 
   // Fetch user data using new session approach
-  const fetchUser = async () => {
+  const fetchUser = useCallback(async () => {
     try {
       const response = await authenticatedFetch("/me");
       if (response.ok) {
@@ -69,7 +69,7 @@ export default function Profile() {
       setUserLoading(false);
       setLoading(false);
     }
-  };
+  }, [router]);
 
   useEffect(() => {
     // Redirect to login if not authenticated
@@ -81,7 +81,7 @@ export default function Profile() {
     if (status === "authenticated") {
       fetchUser();
     }
-  }, [status, router]);
+  }, [status, router, fetchUser]);
 
   useEffect(() => {
     // Don't redirect during loading state - let middleware handle auth

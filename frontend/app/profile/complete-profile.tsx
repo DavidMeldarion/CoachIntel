@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { getApiUrl } from "../../lib/apiUrl";
@@ -30,7 +30,7 @@ export default function CompleteProfile() {
   const [loading, setLoading] = useState(true);
 
   // Fetch user data using new session approach
-  const fetchUser = async () => {
+  const fetchUser = useCallback(async () => {
     try {
       const response = await authenticatedFetch("/me");
       if (response.ok) {
@@ -57,7 +57,7 @@ export default function CompleteProfile() {
       setUserLoading(false);
       setLoading(false);
     }
-  };
+  }, [router]);
 
   useEffect(() => {
     // Redirect to login if not authenticated
@@ -69,7 +69,7 @@ export default function CompleteProfile() {
     if (status === "authenticated") {
       fetchUser();
     }
-  }, [status, router]);
+  }, [status, router, fetchUser]);
 
   useEffect(() => {
     async function fetchProfile() {
