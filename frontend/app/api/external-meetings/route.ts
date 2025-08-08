@@ -13,28 +13,42 @@ export async function POST(request: NextRequest) {
         { status: 401 }
       );
     }
-    const body = await request.json();
-    const source = body.source;
+
+    // Accept source from body or query for robustness
+    let source: string | null = null;
+    try {
+      const body = await request.json();
+      source = body?.source ?? null;
+    } catch {
+      // ignore JSON parse errors; may not have a body
+    }
+    if (!source) {
+      source = request.nextUrl.searchParams.get("source");
+    }
     if (!source) {
       return NextResponse.json(
         { error: "Missing required parameter: source" },
         { status: 400 }
       );
     }
+
     const API_BASE =
       process.env.NEXT_PUBLIC_API_URL || "http://coachintel-backend:8000";
-    const backendUrl = `${API_BASE}/sync/external-meetings?source=${source}`;
+    const url = new URL("/sync/external-meetings", API_BASE);
+    url.searchParams.set("source", source);
+
     const cookie = request.headers.get("cookie");
-    const response = await fetch(backendUrl, {
+    const response = await fetch(url.toString(), {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
         ...(cookie ? { cookie } : {}),
         "x-user-email": email,
         authorization: `Bearer ${email}`,
       },
       credentials: "include",
     });
+
+    // Pass through backend JSON and status
     const data = await response.json();
     return NextResponse.json(data, { status: response.status });
   } catch (error) {
