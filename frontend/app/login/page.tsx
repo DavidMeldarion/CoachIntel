@@ -1,33 +1,45 @@
 'use client';
 
 import Link from "next/link";
-import { Suspense, useEffect } from "react";
+import { Suspense, useEffect, useMemo } from "react";
 import { useSession } from "next-auth/react";
 import { useSearchParams, useRouter } from "next/navigation";
 import GoogleLoginButton from "../../components/GoogleLoginButton";
 import { AuthErrorBoundary } from "../../components/ErrorBoundary";
 import { LoadingOverlay } from "../../components/LoadingStates";
 
+function isSafeCallbackUrl(url: string | null) {
+  if (!url) return false;
+  // Only allow same-origin relative paths
+  if (!url.startsWith('/')) return false;
+  // Disallow auth-related endpoints that can loop
+  if (url.startsWith('/login') || url.startsWith('/signup') || url.startsWith('/api/auth')) return false;
+  return true;
+}
+
 function LoginPageContent() {
   const { data: session, status } = useSession();
   const searchParams = useSearchParams();
   const router = useRouter();
   const error = searchParams.get('error');
-  const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
+  const rawCallback = searchParams.get('callbackUrl');
+  const callbackUrl = useMemo(() => (isSafeCallbackUrl(rawCallback) ? rawCallback! : '/dashboard'), [rawCallback]);
 
-  // Redirect authenticated users
+  // Redirect authenticated users only if we have a safe callback target
   useEffect(() => {
-    if (status === 'authenticated' && session) {
-      // Use Next.js router for proper navigation
+    if (status === 'authenticated' && session && rawCallback && isSafeCallbackUrl(rawCallback)) {
       router.replace(callbackUrl);
     }
-  }, [status, session, router, callbackUrl]);
+  }, [status, session, router, rawCallback, callbackUrl]);
 
-  // Show loading while checking authentication or redirecting
-  if (status === 'loading' || (status === 'authenticated' && session)) {
-    return <LoadingOverlay message={
-      status === 'loading' ? "Checking authentication..." : "Redirecting to dashboard..."
-    } />;
+  // Show loading while checking authentication
+  if (status === 'loading') {
+    return <LoadingOverlay message="Checking authentication..." />;
+  }
+
+  // If authenticated and no redirect needed, return null to avoid flicker
+  if (status === 'authenticated' && session) {
+    return null;
   }
 
   return (
