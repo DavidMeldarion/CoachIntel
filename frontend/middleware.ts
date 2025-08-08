@@ -13,6 +13,5 @@ export const config = {
     '/profile/:path*',
     '/timeline/:path*',
     '/upload/:path*',
-    '/apikeys/:path*',
   ],
 };

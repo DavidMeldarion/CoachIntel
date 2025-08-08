@@ -2,7 +2,6 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { getApiUrl } from "../../lib/apiUrl";
 import { authenticatedFetch } from "../../lib/authenticatedFetch";
 
 // Define the user profile type
