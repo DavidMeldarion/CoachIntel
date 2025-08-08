@@ -256,11 +256,11 @@ function Dashboard() {
     setSyncing(true);
     setSyncError("");
     try {
-      // Start sync and get task_id
-      const res = await authenticatedFetch("/sync/external-meetings", {
+      // Start sync via Next API proxy (ensures ?source= and session headers)
+      const res = await fetch("/api/external-meetings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source: "fireflies" })
+        body: JSON.stringify({ source: "fireflies" }),
       });
       const data = await res.json();
       if (data.error && data.error.includes("Fireflies API key not found")) {
