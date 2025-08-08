@@ -2,6 +2,7 @@ import logging
 import httpx
 import datetime
 import os
+import ssl
 from celery import Celery
 from celery.schedules import crontab
 from app.models import User, Meeting, Transcript, SessionLocal  # Use sync session
@@ -10,9 +11,15 @@ from app.summarization import summarize_meeting
 from app.config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_TOKEN_URL
 from sqlalchemy import or_, cast, Text
 
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+# Prefer a full Redis URL from env (e.g., Upstash rediss://...)
+ENV_REDIS_URL = os.getenv("REDIS_URL") or os.getenv("UPSTASH_REDIS_URL")
+REDIS_HOST = os.getenv("REDIS_HOST", "coachintel-redis")
 REDIS_PORT = os.getenv("REDIS_PORT", "6379")
-REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
+REDIS_URL = ENV_REDIS_URL or f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
+
+# Log Redis configuration for visibility
+logger = logging.getLogger(__name__)
+logger.info(f"[Celery] Using Redis at {REDIS_URL}")
 
 celery_app = Celery(
     'worker',
@@ -20,11 +27,23 @@ celery_app = Celery(
     backend=REDIS_URL
 )
 
+# If using TLS (Upstash rediss://), configure SSL
+if REDIS_URL.startswith("rediss://"):
+    # If you have proper CA certs in the image, set CERT_REQUIRED; otherwise disable verification
+    celery_app.conf.broker_use_ssl = {"ssl_cert_reqs": ssl.CERT_NONE}
+    celery_app.conf.redis_backend_use_ssl = {"ssl_cert_reqs": ssl.CERT_NONE}
+
 celery_app.conf.result_expires = 3600  # 1 hour expiry for task results
 celery_app.conf.update(
     result_serializer='json',
     task_serializer='json',
     accept_content=['json'],
+    broker_connection_retry_on_startup=True,
+    # Improve resiliency with Upstash/serverless Redis
+    result_backend_transport_options={
+        "retry_on_timeout": True,
+        "health_check_interval": 30,
+    },
 )
 
 celery_app.conf.beat_schedule = {

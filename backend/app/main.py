@@ -837,7 +837,11 @@ async def sync_external_meetings(source: str = Query(..., description="fireflies
         if not user_profile.fireflies_api_key:
             logger.warning(f"[SYNC DEBUG] No Fireflies API key for user: {user.email}")
             return {"error": "Fireflies API key not found"}
-        task = sync_fireflies_meetings.delay(user.email, user_profile.fireflies_api_key)
+        try:
+            task = sync_fireflies_meetings.delay(user.email, user_profile.fireflies_api_key)
+        except Exception as e:
+            logger.error(f"[SYNC ERROR] Failed to enqueue Celery task: {e}")
+            raise HTTPException(status_code=503, detail="Task queue unavailable")
         # logger.info(f"[SYNC DEBUG] Fireflies sync task triggered: {task.id}")
         return {"status": "sync started", "task_id": task.id, "source": source}
     elif source == "zoom":
