@@ -1,8 +1,17 @@
 {
   "deploy": {
-    "startCommand": "python start.py",
+    "startCommand": "python start.py api",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
+  },
+  "plugins": [],
+  "profiles": {
+    "api": {
+      "startCommand": "python start.py api"
+    },
+    "worker": {
+      "startCommand": "python start.py worker"
+    }
   },
   "build": {
     "builder": "NIXPACKS"
