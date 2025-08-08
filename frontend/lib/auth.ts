@@ -107,15 +107,20 @@ export const authOptions: NextAuthOptions = {
     maxAge: 7 * 24 * 60 * 60, // 7 days
   },
   events: {
-    async signIn({ user, account, profile }) {
-      console.log(`[NextAuth] User signed in: ${user.email}`);
+    async signIn({ user }) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('[NextAuth] User signed in');
+      }
     },
-    async signOut({ token }) {
-      console.log(`[NextAuth] User signed out`);
+    async signOut() {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('[NextAuth] User signed out');
+      }
     },
-    async session({ session, token }) {
-      // Log session access for security monitoring
-      console.log(`[NextAuth] Session accessed for user: ${session.user?.email}`);
+    async session({ session }) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('[NextAuth] Session accessed');
+      }
     },
   },
 }

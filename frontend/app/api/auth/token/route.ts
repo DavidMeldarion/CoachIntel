@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getToken } from 'next-auth/jwt';
 
 export async function GET(req: NextRequest) {
-  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET });
+  // Disable this debug endpoint in production
+  if (process.env.NODE_ENV === 'production') {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+
   const cookies = req.headers.get('cookie') || '';
 
   return NextResponse.json({
-    hasToken: !!token,
-    token,
     cookiesSent: cookies.split(';').map(s => s.trim()).filter(Boolean),
     host: req.headers.get('host'),
     url: req.url,
