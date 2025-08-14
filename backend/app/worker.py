@@ -29,7 +29,6 @@ celery_app = Celery(
 
 # If using TLS (Upstash rediss://), configure SSL
 if REDIS_URL.startswith("rediss://"):
-    # If you have proper CA certs in the image, set CERT_REQUIRED; otherwise disable verification
     celery_app.conf.broker_use_ssl = {"ssl_cert_reqs": ssl.CERT_NONE}
     celery_app.conf.redis_backend_use_ssl = {"ssl_cert_reqs": ssl.CERT_NONE}
 
@@ -39,12 +38,39 @@ celery_app.conf.update(
     task_serializer='json',
     accept_content=['json'],
     broker_connection_retry_on_startup=True,
-    # Improve resiliency with Upstash/serverless Redis
+    # Reduce health check frequency to cut Redis command volume
+    broker_transport_options={
+        "health_check_interval": 120
+    },
     result_backend_transport_options={
         "retry_on_timeout": True,
-        "health_check_interval": 30,
+        "health_check_interval": 120,
     },
+    # Ignore results by default to reduce backend chatter
+    task_ignore_result=True,
 )
+
+# Tune Celery to reduce Redis command volume
+celery_app.conf.update(
+    broker_pool_limit=1,                 # single connection to broker
+    worker_concurrency=1,                # one consumer (we also run --pool solo)
+    worker_prefetch_multiplier=1,        # no aggressive prefetch
+    worker_send_task_events=False,       # stop emitting events (avoids PUBLISH)
+    task_send_sent_event=False,          # don't send 'task-sent' events
+)
+
+# Prefer long-lived sockets and fewer health checks (helps with Upstash)
+celery_app.conf.broker_transport_options = {
+    **(celery_app.conf.broker_transport_options or {}),
+    "health_check_interval": 300,
+    "socket_keepalive": True,
+    "socket_timeout": 300,
+}
+celery_app.conf.result_backend_transport_options = {
+    **(celery_app.conf.result_backend_transport_options or {}),
+    "health_check_interval": 300,
+    "retry_on_timeout": True,
+}
 
 celery_app.conf.beat_schedule = {
     'sync-fireflies-meetings-hourly': {
@@ -140,10 +166,11 @@ def refresh_all_google_tokens():
 #     # Dummy: Summarize transcript
 #     return f"Summary: {transcript[:30]}..."
 
-@celery_app.task
-def sync_fireflies_meetings(user_email=None, api_key=None):
+@celery_app.task(bind=True, ignore_result=False)
+def sync_fireflies_meetings(self, user_email=None, api_key=None):
     session = SessionLocal()
     try:
+        self.update_state(state="PROGRESS", meta={"step": "start"})
         if user_email and api_key:
             users = session.query(User).filter(User.email == user_email, User.fireflies_api_key == api_key).all()
         else:
@@ -211,6 +238,7 @@ def sync_fireflies_meetings(user_email=None, api_key=None):
                     )
                     session.add(transcript)
         session.commit()
+        self.update_state(state="SUCCESS", meta={"status": "completed"})
     finally:
         session.close()
     return {"status": "success"}
