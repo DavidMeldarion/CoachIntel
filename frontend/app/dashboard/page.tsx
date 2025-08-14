@@ -26,11 +26,13 @@ function Dashboard() {
   const [upcomingMeetings, setUpcomingMeetings] = useState<any[]>([]);
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [meetingStats, setMeetingStats] = useState({ total: 0, week: 0, month: 0, byType: {} as Record<string, number> });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true);        // initial load only
+  const [refreshing, setRefreshing] = useState(false); // background refresh after actions
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState("");
   const [showReconnect, setShowReconnect] = useState(false);
   const [error, setError] = useState("");
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -213,25 +215,19 @@ function Dashboard() {
     }
   }
 
-  async function refetchMeetings() {
-    setLoading(true);
+  async function refetchMeetings(background = false) {
+    if (!background) setLoading(true); else setRefreshing(true);
     try {
       const meetingsRes = await authenticatedFetch("/meetings");
       const meetingsData = await meetingsRes.json();
       const meetings = meetingsData.meetings || [];
-      // Recent activity: last 5 meetings (by date desc)
+      // Recent activity
       const recent = meetings
         .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
         .slice(0, 5)
-        .map((m: any) => ({
-          id: m.id,
-          type: "Meeting",
-          title: m.title,
-          date: m.date,
-          status: "Completed"
-        }));
+        .map((m: any) => ({ id: m.id, type: "Meeting", title: m.title, date: m.date, status: "Completed" }));
       setRecentActivity(recent);
-      // Meeting stats
+      // Stats
       const total = meetings.length;
       const weekStart = new Date();
       weekStart.setDate(weekStart.getDate() - weekStart.getDay());
@@ -240,15 +236,12 @@ function Dashboard() {
       const week = meetings.filter((m: any) => new Date(m.date) >= weekStart).length;
       const month = meetings.filter((m: any) => new Date(m.date) >= monthStart).length;
       const byType: Record<string, number> = {};
-      meetings.forEach((m: any) => {
-        byType[m.source] = (byType[m.source] || 0) + 1;
-      });
+      meetings.forEach((m: any) => { byType[m.source] = (byType[m.source] || 0) + 1; });
       setMeetingStats({ total, week, month, byType });
     } catch (err) {
-      setRecentActivity([]);
-      setMeetingStats({ total: 0, week: 0, month: 0, byType: {} });
+      // Keep prior UI; optionally surface subtle error
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false); else setRefreshing(false);
     }
   }
 
@@ -256,19 +249,13 @@ function Dashboard() {
     setSyncing(true);
     setSyncError("");
 
-    // Helper sleep with jitter
     const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-
-    // Wait until tab is visible (avoid polling in background)
     const waitForVisible = async () => {
       if (typeof document === 'undefined') return;
-      while (document.hidden) {
-        await sleep(1000);
-      }
+      while (document.hidden) await sleep(1000);
     };
 
     try {
-      // Start sync via Next API proxy (ensures ?source= and session headers)
       const res = await fetch("/api/external-meetings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -286,39 +273,27 @@ function Dashboard() {
         return;
       }
 
-      // Initial short delay before first poll to avoid race
       await sleep(1500);
 
-      // Resilient polling with backoff and visibility awareness
       let status = "PENDING" as string;
       let pollCount = 0;
-      let delayMs = 2000;           // start at 2s
-      const maxDelayMs = 8000;      // cap at 8s
-      const maxPolls = 40;          // up to ~2–4 min depending on backoff
+      let delayMs = 2000;
+      const maxDelayMs = 8000;
+      const maxPolls = 40;
       const startAt = Date.now();
-      const maxTotalMs = 2 * 60 * 1000; // 2 minutes overall
+      const maxTotalMs = 2 * 60 * 1000;
 
       while (status !== "SUCCESS" && status !== "FAILURE" && pollCount < maxPolls && (Date.now() - startAt) < maxTotalMs) {
-        // Pause polling if tab hidden
         await waitForVisible();
-
-        // Backoff with jitter 20%
         const jitter = 0.8 + Math.random() * 0.4;
         await sleep(Math.floor(delayMs * jitter));
-
         try {
           const statusRes = await authenticatedFetch(`/sync/status/${data.task_id}?_=${Date.now()}_${Math.random()}`);
           const statusData = await statusRes.json();
           status = statusData.status;
-        } catch (e: any) {
-          // Network hiccup: keep polling with backoff
-          // Optionally log: console.debug('Status poll failed', e);
-        }
-
+        } catch {}
         pollCount++;
-        // Increase delay gradually up to max
         delayMs = Math.min(maxDelayMs, Math.floor(delayMs * 1.5));
-
         if (status === "FAILURE") {
           setSyncError("Sync failed. Please try again.");
           setSyncing(false);
@@ -332,9 +307,13 @@ function Dashboard() {
         return;
       }
 
-      // Now fetch meetings
-      await refetchMeetings();
-      triggerSync(); // Notify global sync
+      // Background refresh only (avoid full-screen loading)
+      await refetchMeetings(true);
+      triggerSync();
+
+      // Success toast
+      setToast({ message: 'Sync complete. Meetings updated.', type: 'success' });
+      setTimeout(() => setToast(null), 3500);
     } catch (err: any) {
       setSyncError("Sync failed: " + (err?.message || err));
     } finally {
@@ -379,6 +358,13 @@ function Dashboard() {
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen p-8 bg-gray-50">
+      {/* Floating toast */}
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded shadow-lg border ${toast.type === 'success' ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+          {toast.message}
+        </div>
+      )}
+
       {/* Loading and error states */}
       {loading && (
         <div className="flex items-center justify-center py-8">
@@ -389,43 +375,41 @@ function Dashboard() {
       {error && !loading && (
         <div className="bg-red-100 text-red-700 px-4 py-2 rounded mb-4">{error}</div>
       )}
-      {/* Only show dashboard UI when not loading and no error */}
+
       {!loading && !error && (
         <>
           <h2 className="text-2xl font-bold mb-6 text-blue-700">Dashboard</h2>
           <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-4xl flex flex-col gap-8 border border-gray-100">
-            {/* 1. Welcome Header */}
-            <div className="flex flex-col items-center mb-4">
-              <h3 className="text-xl font-semibold text-gray-800">Welcome, {user?.name || "User"}!</h3>
-              <p className="text-gray-600 mt-1">Here&apos;s a quick summary of your activity.</p>
-            </div>
             {/* Quick Actions */}
-            <div className="flex gap-4 mb-6">
-              <Link href="/upload">
-                <button className="px-4 py-2 rounded bg-blue-600 text-white font-semibold transition hover:bg-blue-700">Upload Audio</button>
-              </Link>
-              <button
-                className="px-4 py-2 rounded bg-green-600 text-white font-semibold transition hover:bg-green-700"
-                onClick={handleSyncCalendar}
-                disabled={syncing}
-              >
-                {syncing ? "Syncing..." : "Sync Google Calendar"}
-              </button>
-              <button
-                className="px-4 py-2 rounded bg-purple-600 text-white font-semibold transition hover:bg-purple-700"
-                onClick={handleSyncMeetings}
-                disabled={syncing}
-              >
-                {syncing ? "Syncing..." : "Sync Transcribed Meetings (Fireflies/Zoom)"}
-              </button>
-              {showReconnect && (
+            <div className="flex flex-col gap-2 mb-6">
+              <div className="flex gap-4">
+                <Link href="/upload">
+                  <button className="px-4 py-2 rounded bg-blue-600 text-white font-semibold transition hover:bg-blue-700">Upload Audio</button>
+                </Link>
                 <button
-                  className="px-4 py-2 rounded bg-red-600 text-white font-semibold transition hover:bg-red-700"
-                  onClick={handleReconnectGoogle}
+                  className="px-4 py-2 rounded bg-green-600 text-white font-semibold transition hover:bg-green-700"
+                  onClick={handleSyncCalendar}
+                  disabled={syncing}
                 >
-                  Reconnect Google
+                  {syncing ? "Syncing..." : "Sync Google Calendar"}
                 </button>
-              )}
+                <button
+                  className="px-4 py-2 rounded bg-purple-600 text-white font-semibold transition hover:bg-purple-700"
+                  onClick={handleSyncMeetings}
+                  disabled={syncing}
+                >
+                  {syncing ? "Syncing..." : "Sync Transcribed Meetings (Fireflies/Zoom)"}
+                </button>
+                {showReconnect && (
+                  <button
+                    className="px-4 py-2 rounded bg-red-600 text-white font-semibold transition hover:bg-red-700"
+                    onClick={handleReconnectGoogle}
+                  >
+                    Reconnect Google
+                  </button>
+                )}
+              </div>
+              {refreshing && <div className="text-xs text-gray-500">Updating dashboard data…</div>}
             </div>
             {syncError && <div className="text-red-600 text-sm mb-2">{syncError}</div>}
             {/* 2. Upcoming Meetings */}
