@@ -255,6 +255,18 @@ function Dashboard() {
   async function handleSyncMeetings() {
     setSyncing(true);
     setSyncError("");
+
+    // Helper sleep with jitter
+    const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+    // Wait until tab is visible (avoid polling in background)
+    const waitForVisible = async () => {
+      if (typeof document === 'undefined') return;
+      while (document.hidden) {
+        await sleep(1000);
+      }
+    };
+
     try {
       // Start sync via Next API proxy (ensures ?source= and session headers)
       const res = await fetch("/api/external-meetings", {
@@ -273,33 +285,57 @@ function Dashboard() {
         setSyncing(false);
         return;
       }
-      // Add a short delay before first poll to avoid race condition
-      await new Promise(r => setTimeout(r, 2000)); // 2s delay before first poll
-      // Poll for sync completion
-      let status = "PENDING";
+
+      // Initial short delay before first poll to avoid race
+      await sleep(1500);
+
+      // Resilient polling with backoff and visibility awareness
+      let status = "PENDING" as string;
       let pollCount = 0;
-      while (status !== "SUCCESS" && status !== "FAILURE" && pollCount < 30) {
-        await new Promise(r => setTimeout(r, 2000)); // 2s delay between polls
-        const statusRes = await authenticatedFetch(`/sync/status/${data.task_id}?_=${Date.now()}_${Math.random()}`);
-        const statusData = await statusRes.json();
-        // console.log("[DASHBOARD SYNC] Polled status:", statusData);
-        status = statusData.status;
+      let delayMs = 2000;           // start at 2s
+      const maxDelayMs = 8000;      // cap at 8s
+      const maxPolls = 40;          // up to ~2–4 min depending on backoff
+      const startAt = Date.now();
+      const maxTotalMs = 2 * 60 * 1000; // 2 minutes overall
+
+      while (status !== "SUCCESS" && status !== "FAILURE" && pollCount < maxPolls && (Date.now() - startAt) < maxTotalMs) {
+        // Pause polling if tab hidden
+        await waitForVisible();
+
+        // Backoff with jitter 20%
+        const jitter = 0.8 + Math.random() * 0.4;
+        await sleep(Math.floor(delayMs * jitter));
+
+        try {
+          const statusRes = await authenticatedFetch(`/sync/status/${data.task_id}?_=${Date.now()}_${Math.random()}`);
+          const statusData = await statusRes.json();
+          status = statusData.status;
+        } catch (e: any) {
+          // Network hiccup: keep polling with backoff
+          // Optionally log: console.debug('Status poll failed', e);
+        }
+
         pollCount++;
+        // Increase delay gradually up to max
+        delayMs = Math.min(maxDelayMs, Math.floor(delayMs * 1.5));
+
         if (status === "FAILURE") {
           setSyncError("Sync failed. Please try again.");
           setSyncing(false);
           return;
         }
       }
+
       if (status !== "SUCCESS") {
         setSyncError("Sync timed out. Please try again.");
         setSyncing(false);
         return;
       }
+
       // Now fetch meetings
       await refetchMeetings();
       triggerSync(); // Notify global sync
-    } catch (err) {
+    } catch (err: any) {
       setSyncError("Sync failed: " + (err?.message || err));
     } finally {
       setSyncing(false);

@@ -27,25 +27,29 @@ celery_app = Celery(
     backend=REDIS_URL
 )
 
-# If using TLS (Upstash rediss://), configure SSL
+# If using TLS (Upstash rediss://), configure SSL (env-driven verification)
 if REDIS_URL.startswith("rediss://"):
-    celery_app.conf.broker_use_ssl = {"ssl_cert_reqs": ssl.CERT_NONE}
-    celery_app.conf.redis_backend_use_ssl = {"ssl_cert_reqs": ssl.CERT_NONE}
+    ssl_verify_env = os.getenv("REDIS_SSL_VERIFY", "false").lower() in ("1", "true", "yes")
+    cert_reqs = ssl.CERT_REQUIRED if ssl_verify_env else ssl.CERT_NONE
+    celery_app.conf.broker_use_ssl = {"ssl_cert_reqs": cert_reqs}
+    celery_app.conf.redis_backend_use_ssl = {"ssl_cert_reqs": cert_reqs}
 
-celery_app.conf.result_expires = 3600  # 1 hour expiry for task results
+# Expire results to limit backend footprint (in seconds)
+celery_app.conf.result_expires = int(os.getenv("CELERY_RESULT_EXPIRES", "3600"))
+
+# Core serialization and reliability
 celery_app.conf.update(
     result_serializer='json',
     task_serializer='json',
     accept_content=['json'],
     broker_connection_retry_on_startup=True,
-    # Reduce health check frequency to cut Redis command volume
-    broker_transport_options={
-        "health_check_interval": 120
-    },
-    result_backend_transport_options={
-        "retry_on_timeout": True,
-        "health_check_interval": 120,
-    },
+    broker_connection_max_retries=None,  # retry forever
+    # Task execution safety
+    task_track_started=False,            # avoid extra writes/events
+    task_acks_late=True,                 # ack after execution for reliability
+    task_reject_on_worker_lost=True,     # requeue if worker dies
+    task_soft_time_limit=int(os.getenv("CELERY_SOFT_TIME_LIMIT", "600")),  # 10m soft
+    task_time_limit=int(os.getenv("CELERY_HARD_TIME_LIMIT", "900")),       # 15m hard
     # Ignore results by default to reduce backend chatter
     task_ignore_result=True,
 )
@@ -57,18 +61,24 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,        # no aggressive prefetch
     worker_send_task_events=False,       # stop emitting events (avoids PUBLISH)
     task_send_sent_event=False,          # don't send 'task-sent' events
+    worker_disable_rate_limits=True,
 )
 
 # Prefer long-lived sockets and fewer health checks (helps with Upstash)
+health_interval = int(os.getenv("REDIS_HEALTH_CHECK_INTERVAL", "300"))
 celery_app.conf.broker_transport_options = {
     **(celery_app.conf.broker_transport_options or {}),
-    "health_check_interval": 300,
+    "health_check_interval": health_interval,
     "socket_keepalive": True,
-    "socket_timeout": 300,
+    "socket_timeout": int(os.getenv("REDIS_SOCKET_TIMEOUT", "300")),
+    "socket_connect_timeout": int(os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT", "30")),
+    "retry_on_timeout": True,
+    # If using late acks, ensure messages reappear if not acknowledged in time
+    "visibility_timeout": int(os.getenv("REDIS_VISIBILITY_TIMEOUT", "900")),
 }
 celery_app.conf.result_backend_transport_options = {
     **(celery_app.conf.result_backend_transport_options or {}),
-    "health_check_interval": 300,
+    "health_check_interval": health_interval,
     "retry_on_timeout": True,
 }
 
@@ -105,7 +115,7 @@ def summarize_missing_transcripts():
                 summary = summarize_meeting(transcript.full_text)
                 print (f"Final summary: {summary}")
                 transcript.summary = summary
-                transcript.action_items = summary.get("action_items", [])
+                transcript.action_items = (summary or {}).get("action_items", [])
                 session.add(transcript)
                 session.commit()
                 logging.info(f"[Summarization] Transcript {transcript.id} summarized successfully.")
@@ -115,10 +125,11 @@ def summarize_missing_transcripts():
         session.close()
     return {"status": "summarization complete"}
 
+
 def refresh_google_token_for_user(user, session):
     access_token, refresh_token, expiry = user.get_google_tokens()
     refresh_threshold = datetime.timedelta(minutes=5)
-    now = datetime.utcnow()
+    now = datetime.datetime.utcnow()
     if refresh_token and expiry and expiry < now + refresh_threshold:
         logging.info(f"[Google Token Refresh] Attempting refresh for user {user.email}")
         data = {
@@ -145,6 +156,7 @@ def refresh_google_token_for_user(user, session):
         except Exception as e:
             logging.error(f"[Google Token Refresh] Exception for user {user.email}: {e}")
 
+
 @celery_app.task
 def refresh_all_google_tokens():
     session = SessionLocal()
@@ -156,76 +168,101 @@ def refresh_all_google_tokens():
         session.close()
     return {"status": "google token refresh complete"}
 
-# @celery_app.task
-# def transcribe_audio_task(audio_path):
-#     # Dummy: Transcribe audio
-#     return f"Transcribed: {audio_path}"
-
-# @celery_app.task
-# def summarize_transcript_task(transcript):
-#     # Dummy: Summarize transcript
-#     return f"Summary: {transcript[:30]}..."
 
 @celery_app.task(bind=True, ignore_result=False)
 def sync_fireflies_meetings(self, user_email=None, api_key=None):
     session = SessionLocal()
     try:
-        self.update_state(state="PROGRESS", meta={"step": "start"})
+        try:
+            self.update_state(state="PROGRESS", meta={"step": "start"})
+        except Exception:
+            # ignore backend write issues, do not fail task
+            pass
+
+        # Determine user set to process
         if user_email and api_key:
             users = session.query(User).filter(User.email == user_email, User.fireflies_api_key == api_key).all()
         else:
             users = session.query(User).filter(User.fireflies_api_key.isnot(None)).all()
+
         for user in users:
             try:
                 meetings_data = fetch_fireflies_meetings_sync(user.email, user.fireflies_api_key, limit=50)
             except Exception as e:
                 logging.error(f"Fireflies API error for user {user.email}: {e}")
                 continue
-            if 'error' in meetings_data:
-                logging.error(f"Fireflies API returned error for user {user.email}: {meetings_data['error']} | Details: {meetings_data.get('details')}")
+
+            if isinstance(meetings_data, dict) and meetings_data.get('error'):
+                logging.error(
+                    f"Fireflies API returned error for user {user.email}: {meetings_data.get('error')} | Details: {meetings_data.get('details')}"
+                )
                 continue
+
             for m in meetings_data.get('meetings', []):
-                raw_date = m['date']
+                # Parse meeting date robustly
+                raw_date = m.get('date')
                 if isinstance(raw_date, int):
+                    # handle ms epoch
                     if raw_date > 1e12:
                         raw_date = raw_date // 1000
                     meeting_date = datetime.datetime.fromtimestamp(raw_date)
                 elif isinstance(raw_date, str):
                     try:
-                        meeting_date = datetime.fromisoformat(raw_date)
+                        meeting_date = datetime.datetime.fromisoformat(raw_date)
                     except Exception:
                         meeting_date = None
                 else:
-                    meeting_date = raw_date
-                meeting_id = m['id']
-                # Use full_text from GraphQL response only
-                full_text = m.get('full_text', '')
+                    meeting_date = raw_date if isinstance(raw_date, datetime.datetime) else None
+
+                meeting_id = m.get('id')
+                if not meeting_id:
+                    # skip invalid entries
+                    continue
+
+                participants = m.get('participants') or []
+                first_participant_name = ''
+                if participants and isinstance(participants, list):
+                    first = participants[0]
+                    if isinstance(first, dict):
+                        first_participant_name = first.get('name', '')
+
+                full_text = m.get('full_text') or ''
+                title = m.get('title', '')
+                duration = m.get('duration')
+                source = m.get('source', 'fireflies')
+
+                summary_obj = m.get('summary') or {}
+                if not isinstance(summary_obj, dict):
+                    summary_obj = {}
+                action_items = summary_obj.get('action_items', [])
+
                 # Idempotency: update or create Meeting and Transcript by meeting_id and user_id
                 existing_meeting = session.query(Meeting).filter(Meeting.id == meeting_id, Meeting.user_id == user.id).one_or_none()
                 if existing_meeting:
-                    existing_meeting.client_name = m['participants'][0]['name'] if m['participants'] else ''
-                    existing_meeting.title = m['title']
+                    existing_meeting.client_name = first_participant_name
+                    existing_meeting.title = title
                     existing_meeting.date = meeting_date
-                    existing_meeting.duration = m['duration']
-                    existing_meeting.source = m['source']
+                    existing_meeting.duration = duration
+                    existing_meeting.source = source
                     existing_meeting.transcript_id = meeting_id
                     session.merge(existing_meeting)
                 else:
                     meeting = Meeting(
                         id=meeting_id,
                         user_id=user.id,
-                        client_name=m['participants'][0]['name'] if m['participants'] else '',
-                        title=m['title'],
+                        client_name=first_participant_name,
+                        title=title,
                         date=meeting_date,
-                        duration=m['duration'],
-                        source=m['source'],
+                        duration=duration,
+                        source=source,
                         transcript_id=meeting_id
                     )
                     session.add(meeting)
+
                 existing_transcript = session.query(Transcript).filter(Transcript.id == meeting_id).one_or_none()
                 if existing_transcript:
-                    existing_transcript.summary = m['summary']
-                    existing_transcript.action_items = m['summary'].get('action_items', [])
+                    existing_transcript.summary = summary_obj
+                    existing_transcript.action_items = action_items
                     existing_transcript.full_text = full_text
                     session.merge(existing_transcript)
                 else:
@@ -233,12 +270,15 @@ def sync_fireflies_meetings(self, user_email=None, api_key=None):
                         id=meeting_id,
                         meeting_id=meeting_id,
                         full_text=full_text,
-                        summary=m['summary'],
-                        action_items=m['summary'].get('action_items', [])
+                        summary=summary_obj,
+                        action_items=action_items
                     )
                     session.add(transcript)
         session.commit()
-        self.update_state(state="SUCCESS", meta={"status": "completed"})
+        try:
+            self.update_state(state="SUCCESS", meta={"status": "completed"})
+        except Exception:
+            pass
     finally:
         session.close()
     return {"status": "success"}
