@@ -248,6 +248,7 @@ function Dashboard() {
   async function handleSyncMeetings() {
     setSyncing(true);
     setSyncError("");
+    setRefreshing(true); // show inline updating message immediately when sync starts
 
     const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
     const waitForVisible = async () => {
@@ -265,11 +266,13 @@ function Dashboard() {
       if (data.error && data.error.includes("Fireflies API key not found")) {
         setSyncError("Fireflies API key not found");
         setSyncing(false);
+        setRefreshing(false);
         return;
       }
       if (!data.task_id) {
         setSyncError("No sync task started. Raw response: " + JSON.stringify(data));
         setSyncing(false);
+        setRefreshing(false);
         return;
       }
 
@@ -297,6 +300,7 @@ function Dashboard() {
         if (status === "FAILURE") {
           setSyncError("Sync failed. Please try again.");
           setSyncing(false);
+          setRefreshing(false);
           return;
         }
       }
@@ -304,20 +308,20 @@ function Dashboard() {
       if (status !== "SUCCESS") {
         setSyncError("Sync timed out. Please try again.");
         setSyncing(false);
+        setRefreshing(false);
         return;
       }
 
-      // Background refresh only (avoid full-screen loading)
       await refetchMeetings(true);
       triggerSync();
 
-      // Success toast
       setToast({ message: 'Sync complete. Meetings updated.', type: 'success' });
       setTimeout(() => setToast(null), 3500);
     } catch (err: any) {
       setSyncError("Sync failed: " + (err?.message || err));
     } finally {
       setSyncing(false);
+      setRefreshing(false);
     }
   }
 
