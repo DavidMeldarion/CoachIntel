@@ -34,6 +34,9 @@ if REDIS_URL.startswith("rediss://"):
     celery_app.conf.broker_use_ssl = {"ssl_cert_reqs": cert_reqs}
     celery_app.conf.redis_backend_use_ssl = {"ssl_cert_reqs": cert_reqs}
 
+# Explicitly disable worker remote control to avoid PUBLISH traffic
+celery_app.conf.worker_enable_remote_control = False
+
 # Expire results to limit backend footprint (in seconds)
 celery_app.conf.result_expires = int(os.getenv("CELERY_RESULT_EXPIRES", "3600"))
 

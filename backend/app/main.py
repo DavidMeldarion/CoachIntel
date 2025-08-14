@@ -946,13 +946,15 @@ async def health():
             await session.execute(select(1))
     except Exception as e:
         return {"ok": False, "db": False, "error": str(e)}
-    # Check Celery/Redis
+
+    # Check Redis broker with a lightweight ping using Celery connection
     try:
-        # Send a dummy task and check status
-        result = celery_app.send_task('worker.sync_fireflies_meetings')
-        _ = AsyncResult(result.id)
+        with celery_app.connection_or_acquire() as conn:
+            # For Redis, a simple ensure_connection triggers a PING under the hood
+            conn.ensure_connection(max_retries=1)
     except Exception as e:
         return {"ok": False, "celery": False, "error": str(e)}
+
     return {"ok": True, "db": True, "celery": True}
 
 from fastapi import status
