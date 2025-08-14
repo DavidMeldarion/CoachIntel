@@ -28,7 +28,8 @@ function Dashboard() {
   const [meetingStats, setMeetingStats] = useState({ total: 0, week: 0, month: 0, byType: {} as Record<string, number> });
   const [loading, setLoading] = useState(true);        // initial load only
   const [refreshing, setRefreshing] = useState(false); // background refresh after actions
-  const [syncing, setSyncing] = useState(false);
+  const [syncingCalendar, setSyncingCalendar] = useState(false);
+  const [syncingMeetings, setSyncingMeetings] = useState(false);
   const [syncError, setSyncError] = useState("");
   const [showReconnect, setShowReconnect] = useState(false);
   const [error, setError] = useState("");
@@ -172,12 +173,12 @@ function Dashboard() {
   }
 
   async function handleSyncCalendar() {
-    setSyncing(true);
+    setSyncingCalendar(true);
     setSyncError("");
     try {
       const res = await authenticatedFetch("/calendar/events");
       if (res.status === 401) {
-                await authenticatedFetch('/logout', { method: 'POST' });
+        await authenticatedFetch('/logout', { method: 'POST' });
         localStorage.clear();
         sessionStorage.clear();
         window.location.href = "/login";
@@ -211,7 +212,7 @@ function Dashboard() {
       setSyncError(err.message || "Sync failed");
       setShowReconnect(false);
     } finally {
-      setSyncing(false);
+      setSyncingCalendar(false);
     }
   }
 
@@ -246,7 +247,7 @@ function Dashboard() {
   }
 
   async function handleSyncMeetings() {
-    setSyncing(true);
+    setSyncingMeetings(true);
     setSyncError("");
     setRefreshing(true); // show inline updating message immediately when sync starts
 
@@ -265,13 +266,13 @@ function Dashboard() {
       const data = await res.json();
       if (data.error && data.error.includes("Fireflies API key not found")) {
         setSyncError("Fireflies API key not found");
-        setSyncing(false);
+        setSyncingMeetings(false);
         setRefreshing(false);
         return;
       }
       if (!data.task_id) {
         setSyncError("No sync task started. Raw response: " + JSON.stringify(data));
-        setSyncing(false);
+        setSyncingMeetings(false);
         setRefreshing(false);
         return;
       }
@@ -299,7 +300,7 @@ function Dashboard() {
         delayMs = Math.min(maxDelayMs, Math.floor(delayMs * 1.5));
         if (status === "FAILURE") {
           setSyncError("Sync failed. Please try again.");
-          setSyncing(false);
+          setSyncingMeetings(false);
           setRefreshing(false);
           return;
         }
@@ -307,7 +308,7 @@ function Dashboard() {
 
       if (status !== "SUCCESS") {
         setSyncError("Sync timed out. Please try again.");
-        setSyncing(false);
+        setSyncingMeetings(false);
         setRefreshing(false);
         return;
       }
@@ -320,7 +321,7 @@ function Dashboard() {
     } catch (err: any) {
       setSyncError("Sync failed: " + (err?.message || err));
     } finally {
-      setSyncing(false);
+      setSyncingMeetings(false);
       setRefreshing(false);
     }
   }
@@ -388,21 +389,29 @@ function Dashboard() {
             <div className="flex flex-col gap-2 mb-6">
               <div className="flex gap-4">
                 <Link href="/upload">
-                  <button className="px-4 py-2 rounded bg-blue-600 text-white font-semibold transition hover:bg-blue-700">Upload Audio</button>
+                  <button
+                    className="px-4 py-2 rounded bg-blue-600 text-white font-semibold transition hover:bg-blue-700 flex items-center"
+                    aria-label="Upload Audio (Pro feature)"
+                    title="Pro feature"
+                  >
+                    <span className="mr-2" aria-hidden>🔒</span>
+                    <span>Upload Audio</span>
+                    <span className="ml-2 text-[10px] uppercase tracking-wide bg-yellow-200 text-yellow-800 rounded px-1 py-0.5">Pro</span>
+                  </button>
                 </Link>
                 <button
                   className="px-4 py-2 rounded bg-green-600 text-white font-semibold transition hover:bg-green-700"
                   onClick={handleSyncCalendar}
-                  disabled={syncing}
+                  disabled={syncingCalendar}
                 >
-                  {syncing ? "Syncing..." : "Sync Google Calendar"}
+                  {syncingCalendar ? "Syncing..." : "Sync Google Calendar"}
                 </button>
                 <button
                   className="px-4 py-2 rounded bg-purple-600 text-white font-semibold transition hover:bg-purple-700"
                   onClick={handleSyncMeetings}
-                  disabled={syncing}
+                  disabled={syncingMeetings}
                 >
-                  {syncing ? "Syncing..." : "Sync Transcribed Meetings (Fireflies/Zoom)"}
+                  {syncingMeetings ? "Syncing..." : "Sync Transcribed Meetings (Fireflies/Zoom)"}
                 </button>
                 {showReconnect && (
                   <button
