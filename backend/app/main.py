@@ -187,7 +187,10 @@ async def verify_jwt_user(request: Request):
     
     for cookie in cookie_header.split(";"):
         cookie = cookie.strip()
-        if cookie.startswith("next-auth.session-token="):
+        if cookie.startswith("__Secure-next-auth.session-token="):
+            next_auth_token = cookie.split("__Secure-next-auth.session-token=")[1]
+            break
+        elif cookie.startswith("next-auth.session-token="):
             next_auth_token = cookie.split("next-auth.session-token=")[1]
             break
         elif cookie.startswith("session="):
@@ -740,7 +743,10 @@ async def update_user_profile(request: Request):
     
     for cookie in cookie_header.split(";"):
         cookie = cookie.strip()
-        if cookie.startswith("next-auth.session-token="):
+        if cookie.startswith("__Secure-next-auth.session-token="):
+            next_auth_token = cookie.split("__Secure-next-auth.session-token=")[1]
+            break
+        elif cookie.startswith("next-auth.session-token="):
             next_auth_token = cookie.split("next-auth.session-token=")[1]
             break
         elif cookie.startswith("user="):
