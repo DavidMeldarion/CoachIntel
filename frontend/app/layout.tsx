@@ -5,12 +5,15 @@ import Navbar from '../components/Navbar';
 import { SyncProvider } from '../lib/syncContext';
 import ClientLayout from './ClientLayout';
 import Providers from '../components/Providers';
+import { authOptions } from "../lib/auth";
+import { getServerSession } from "next-auth";
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const session = await getServerSession(authOptions);
   return (
     <html lang="en">
       <body className="bg-gray-50">
-        <Providers>
+        <Providers session={session}>
           <ClientLayout>
             <Navbar />
             {children}

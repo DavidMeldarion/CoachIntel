@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../../lib/auth";
+import { getServerApiBase } from "../../../lib/serverApi";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 // Only POST is supported for sync
 export async function POST(request: NextRequest) {
@@ -32,12 +36,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const API_BASE =
-      process.env.NEXT_PUBLIC_API_URL || "http://coachintel-backend:8000";
+    const API_BASE = getServerApiBase();
     const url = new URL("/sync/external-meetings", API_BASE);
     url.searchParams.set("source", source);
 
-    const cookie = request.headers.get("cookie");
+    const cookie = request.headers.get("cookie") || "";
     const response = await fetch(url.toString(), {
       method: "POST",
       headers: {
@@ -45,14 +48,13 @@ export async function POST(request: NextRequest) {
         "x-user-email": email,
         authorization: `Bearer ${email}`,
       },
-      credentials: "include",
     });
 
     // Pass through backend JSON and status
     const data = await response.json();
     return NextResponse.json(data, { status: response.status });
-  } catch (error) {
-    console.error("Error syncing external meetings:", error);
+  } catch (error: any) {
+    console.error("[external-meetings] Error:", error?.message || error);
     return NextResponse.json(
       { error: "Failed to sync meetings" },
       { status: 500 }

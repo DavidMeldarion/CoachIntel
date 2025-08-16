@@ -1,5 +1,9 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../../lib/auth";
+import { getServerApiBase } from "../../../lib/serverApi";
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions);
@@ -12,24 +16,29 @@ export async function GET(req: Request) {
     });
   }
 
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://coachintel-backend:8000";
+  // Use internal URL inside Docker for server-to-server calls
+  const API_BASE = getServerApiBase();
   const url = `${API_BASE}/test-fireflies`;
   const cookie = req.headers.get("cookie") || "";
 
-  const res = await fetch(url, {
-    method: "GET",
-    headers: {
-      ...(cookie ? { cookie } : {}),
-      "x-user-email": email,
-      authorization: `Bearer ${email}`,
-    },
-    credentials: "include",
-  });
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        ...(cookie ? { cookie } : {}),
+        "x-user-email": email,
+        authorization: `Bearer ${email}`,
+      },
+    });
 
-  if (res.ok) {
-    return new Response(null, { status: 200 });
+    if (res.ok) {
+      return new Response(null, { status: 200 });
+    }
+
+    const body = await res.text();
+    return new Response(body, { status: res.status });
+  } catch (err: any) {
+    console.error("[test-fireflies] Backend fetch failed:", err?.message || err);
+    return new Response("Backend unreachable from frontend. Check INTERNAL_API_URL and docker networking.", { status: 502 });
   }
-
-  const body = await res.text();
-  return new Response(body, { status: res.status });
 }

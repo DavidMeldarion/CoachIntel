@@ -179,7 +179,6 @@ def sync_fireflies_meetings(self, user_email=None, api_key=None):
         try:
             self.update_state(state="PROGRESS", meta={"step": "start"})
         except Exception:
-            # ignore backend write issues, do not fail task
             pass
 
         # Determine user set to process
@@ -200,6 +199,8 @@ def sync_fireflies_meetings(self, user_email=None, api_key=None):
                     f"Fireflies API returned error for user {user.email}: {meetings_data.get('error')} | Details: {meetings_data.get('details')}"
                 )
                 continue
+
+            org_id = getattr(user, 'org_id', None)
 
             for m in meetings_data.get('meetings', []):
                 # Parse meeting date robustly
@@ -248,11 +249,14 @@ def sync_fireflies_meetings(self, user_email=None, api_key=None):
                     existing_meeting.duration = duration
                     existing_meeting.source = source
                     existing_meeting.transcript_id = meeting_id
+                    if org_id is not None:
+                        existing_meeting.org_id = org_id
                     session.merge(existing_meeting)
                 else:
                     meeting = Meeting(
                         id=meeting_id,
                         user_id=user.id,
+                        org_id=org_id,
                         client_name=first_participant_name,
                         title=title,
                         date=meeting_date,
@@ -267,11 +271,14 @@ def sync_fireflies_meetings(self, user_email=None, api_key=None):
                     existing_transcript.summary = summary_obj
                     existing_transcript.action_items = action_items
                     existing_transcript.full_text = full_text
+                    if org_id is not None:
+                        existing_transcript.org_id = org_id
                     session.merge(existing_transcript)
                 else:
                     transcript = Transcript(
                         id=meeting_id,
                         meeting_id=meeting_id,
+                        org_id=org_id,
                         full_text=full_text,
                         summary=summary_obj,
                         action_items=action_items

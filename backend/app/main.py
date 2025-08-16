@@ -141,6 +141,7 @@ class UserProfileIn(BaseModel):
     zoom_jwt: str | None = Field(None, description="Zoom JWT token")
     phone: str | None = Field(None, max_length=20, description="Phone number")
     address: str | None = Field(None, max_length=200, description="Address")
+    plan: str | None = Field(None, description="User subscription plan")
     
     @validator("email")
     def validate_email(cls, v):
@@ -169,6 +170,7 @@ class UserProfileOut(BaseModel):
     zoom_jwt: str | None = None
     phone: str | None = None
     address: str | None = None
+    plan: str | None = None
     
     class Config:
         from_attributes = True  # Pydantic v2 syntax (replaces orm_mode = True)
@@ -302,21 +304,20 @@ async def get_user(email: str):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Manually create the response to ensure computed properties are included
     return UserProfileOut(
         email=user.email,
         first_name=user.first_name,
         last_name=user.last_name,
-        name=user.name,  # This will use the computed property
+        name=user.name,
         fireflies_api_key=user.fireflies_api_key,
         zoom_jwt=user.zoom_jwt,
         phone=user.phone,
-        address=user.address
+        address=user.address,
+        plan=getattr(user, 'plan', None)
     )
 
 @app.post("/user", response_model=UserProfileOut)
 async def upsert_user(profile: UserProfileIn):
-    # Check if user already exists
     existing = await get_user_by_email(profile.email)
     if existing:
         raise HTTPException(status_code=409, detail="User already exists")
@@ -330,16 +331,16 @@ async def upsert_user(profile: UserProfileIn):
         address=profile.address,
     )
     
-    # Manually create the response to ensure computed properties are included
     return UserProfileOut(
         email=user.email,
         first_name=user.first_name,
         last_name=user.last_name,
-        name=user.name,  # This will use the computed property
+        name=user.name,
         fireflies_api_key=user.fireflies_api_key,
         zoom_jwt=user.zoom_jwt,
         phone=user.phone,
-        address=user.address
+        address=user.address,
+        plan=getattr(user, 'plan', None)
     )
 
 @app.post("/login")
@@ -396,7 +397,8 @@ async def login(request: LoginRequest):
                 "email": request.email,
                 "first_name": user.first_name,
                 "last_name": user.last_name,
-                "name": user.name
+                "name": user.name,
+                "plan": getattr(user, 'plan', None)
             }
         })
         
@@ -453,7 +455,8 @@ async def signup(request: SignupRequest):
                 "email": request.email,
                 "first_name": user.first_name,
                 "last_name": user.last_name,
-                "name": user.name
+                "name": user.name,
+                "plan": getattr(user, 'plan', None)
             }
         })
         
@@ -594,6 +597,9 @@ async def get_calendar_events(user: User = Depends(verify_jwt_user)):
     params = {"maxResults": 5, "orderBy": "startTime", "singleEvents": True, "timeMin": datetime.utcnow().isoformat() + "Z"}
     async with httpx.AsyncClient() as client:
         resp = await client.get(GOOGLE_CALENDAR_EVENTS_URL, headers=headers, params=params)
+        if resp.status_code == 401:
+            # Invalid/expired access token and no refresh possible
+            raise HTTPException(status_code=401, detail=f"Google API returned 401 Unauthorized: {resp.text}")
         if resp.status_code == 403:
             raise HTTPException(status_code=403, detail=f"Google API returned 403 Forbidden: {resp.text}")
         resp.raise_for_status()
@@ -709,7 +715,8 @@ async def get_current_user(user: User = Depends(verify_jwt_user)):
         "fireflies_api_key": user.fireflies_api_key,
         "zoom_jwt": user.zoom_jwt,
         "phone": user.phone,
-        "address": user.address
+        "address": user.address,
+        "plan": getattr(user, 'plan', None)
     })
     # Prevent caching of user data
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
@@ -741,7 +748,7 @@ async def update_user_profile(request: Request):
     
     email = None
     
-    # Try NextAuth authentication first
+    # Require NextAuth cookie + header combo, or legacy JWT
     if next_auth_token and user_email:
         email = user_email
         print(f"[Backend] update_user_profile - Using NextAuth session for user: {email}")
@@ -758,12 +765,8 @@ async def update_user_profile(request: Request):
     
     if not email:
         raise HTTPException(status_code=401, detail="No authentication token or user email")
-    
     try:
-        # Get request data
         data = await request.json()
-        
-        # Update user profile
         user = await create_or_update_user(
             email=email,
             first_name=data.get("first_name"),
@@ -771,10 +774,9 @@ async def update_user_profile(request: Request):
             fireflies_api_key=data.get("fireflies_api_key"),
             zoom_jwt=data.get("zoom_jwt"),
             phone=data.get("phone"),
-            address=data.get("address")
+            address=data.get("address"),
+            plan=data.get("plan"),
         )
-        
-        # Return a simple dictionary instead of Pydantic model
         return {
             "email": user.email,
             "first_name": user.first_name,
@@ -783,7 +785,8 @@ async def update_user_profile(request: Request):
             "fireflies_api_key": user.fireflies_api_key,
             "zoom_jwt": user.zoom_jwt,
             "phone": user.phone,
-            "address": user.address
+            "address": user.address,
+            "plan": getattr(user, 'plan', None)
         }
     except Exception as e:
         print(f"[Backend] update_user_profile - Error: {e}")
@@ -791,10 +794,13 @@ async def update_user_profile(request: Request):
 
 @app.get("/meetings/")
 async def get_user_meetings(user: User = Depends(verify_jwt_user)):
-    # Query meetings for this user
+    # Query meetings for this user (and org if available)
     async with AsyncSessionLocal() as session:
+        filters = [Meeting.user_id == user.id]
+        if getattr(user, 'org_id', None) is not None:
+            filters.append(Meeting.org_id == user.org_id)
         result = await session.execute(
-            select(Meeting).options(selectinload(Meeting.transcript)).where(Meeting.user_id == user.id)
+            select(Meeting).options(selectinload(Meeting.transcript)).where(*filters)
         )
         meetings = result.scalars().all()
         meeting_list = []
@@ -907,17 +913,20 @@ async def get_meeting_with_transcript(meeting_id: str, user: User = Depends(veri
     Logs detailed errors if not found.
     """
     async with AsyncSessionLocal() as session:
+        filters = [Meeting.id == meeting_id, Meeting.user_id == user.id]
+        if getattr(user, 'org_id', None) is not None:
+            filters.append(Meeting.org_id == user.org_id)
         result = await session.execute(
-            select(Meeting).options(selectinload(Meeting.transcript)).where(Meeting.id == meeting_id, Meeting.user_id == user.id)
+            select(Meeting).options(selectinload(Meeting.transcript)).where(*filters)
         )
         meeting = result.scalar_one_or_none()
         if not meeting:
-            logging.error(f"Meeting not found: id={meeting_id}, user_id={user.id}")
+            logging.error(f"Meeting not found: id={meeting_id}, user_id={user.id}, org_id={getattr(user, 'org_id', None)}")
             # Optionally, check if meeting exists for any user
             other_result = await session.execute(select(Meeting).where(Meeting.id == meeting_id))
             other_meeting = other_result.scalar_one_or_none()
             if other_meeting:
-                logging.error(f"Meeting id={meeting_id} exists but not for user_id={user.id}")
+                logging.error(f"Meeting id={meeting_id} exists but not for user_id={user.id} and org_id={getattr(user, 'org_id', None)}")
             return {"error": "Meeting not found"}
         transcript = None
         if meeting.transcript:
@@ -957,13 +966,46 @@ async def health():
 
     return {"ok": True, "db": True, "celery": True}
 
+# Plan guard helper
+ALLOWED_PLANS = {"free", "plus", "pro"}
+
+def require_plan(user: User, allowed: set[str]):
+    plan = getattr(user, 'plan', None) or 'free'
+    if plan not in ALLOWED_PLANS:
+        plan = 'free'
+    if plan not in allowed:
+        raise HTTPException(status_code=403, detail=f"Plan '{plan}' is not permitted for this action")
+
 from fastapi import status
 
 @app.post("/summarize-missing-transcripts", status_code=status.HTTP_202_ACCEPTED)
-async def trigger_summarize_missing_transcripts():
+async def trigger_summarize_missing_transcripts(user: User = Depends(verify_jwt_user)):
     """
-    Trigger the Celery task to summarize all missing transcripts.
+    Trigger the Celery task to summarize all missing transcripts for eligible users.
+    Requires plan: plus or pro.
     Returns the Celery task id.
     """
+    # Enforce plan: Free cannot summarize
+    require_plan(user, {"plus", "pro"})
     result = celery_app.send_task('app.worker.summarize_missing_transcripts')
     return {"task_id": result.id, "status": "started"}
+
+@app.post("/upload-audio/")
+async def upload_audio(file: UploadFile = File(...), user: User = Depends(verify_jwt_user)):
+    """Upload audio for transcription (Pro only)."""
+    require_plan(user, {"pro"})
+    try:
+      # For now, accept the file and return 202; storage/transcription handled elsewhere
+      size = 0
+      chunk = await file.read()
+      size = len(chunk)
+      return JSONResponse(status_code=202, content={"status": "received", "filename": file.filename, "size": size})
+    except Exception as e:
+      raise HTTPException(status_code=400, detail=f"Upload failed: {e}")
+
+@app.post("/transcribe/")
+async def transcribe(user: User = Depends(verify_jwt_user)):
+    """Trigger transcription for an uploaded asset (Pro only)."""
+    require_plan(user, {"pro"})
+    # Not implemented yet; return 202 to indicate accepted
+    return JSONResponse(status_code=202, content={"status": "accepted"})

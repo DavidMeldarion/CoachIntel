@@ -14,6 +14,8 @@ export type UserProfile = {
   zoom_jwt?: string;
   phone?: string;
   address?: string;
+  // Added: current subscription plan
+  plan?: "free" | "plus" | "pro" | null;
 };
 
 export default function Profile() {
@@ -54,6 +56,7 @@ export default function Profile() {
           zoom_jwt: userData.zoom_jwt || "",
           phone: userData.phone || "",
           address: userData.address || "",
+          plan: (userData.plan as "free" | "plus" | "pro" | null) ?? null,
         };
         setUser(userProfile);
         setProfile(userProfile);
@@ -98,6 +101,7 @@ export default function Profile() {
         zoom_jwt: user.zoom_jwt || "",
         phone: user.phone || "",
         address: user.address || "",
+        plan: user.plan ?? null,
       });
       setFormData({
         email: user.email,
@@ -108,6 +112,7 @@ export default function Profile() {
         zoom_jwt: user.zoom_jwt || "",
         phone: user.phone || "",
         address: user.address || "",
+        plan: user.plan ?? null,
       });
       setLoading(false);
     } else {
@@ -120,12 +125,13 @@ export default function Profile() {
     setError("");
     setSuccess("");
     try {
+      const { plan, ...payload } = formData; // do not update plan here
       const res = await authenticatedFetch("/user", {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(payload),
       });
 
       if (res.ok) {
@@ -152,6 +158,7 @@ export default function Profile() {
         zoom_jwt: "",
         phone: "",
         address: "",
+        plan: null,
       }
     );
     setIsEditing(false);
@@ -177,6 +184,22 @@ export default function Profile() {
       setTestingFireflies(false);
     }
   }
+
+  const planLabel = (p?: "free" | "plus" | "pro" | null) => {
+    if (!p) return "Free";
+    return p === "free" ? "Free" : p === "plus" ? "Plus" : "Pro";
+  };
+
+  const planBadgeClass = (p?: "free" | "plus" | "pro" | null) => {
+    switch (p) {
+      case "pro":
+        return "bg-blue-100 text-blue-800";
+      case "plus":
+        return "bg-purple-100 text-purple-800";
+      default:
+        return "bg-gray-100 text-gray-800";
+    }
+  };
 
   if (status === "loading" || loading) {
     return (
@@ -212,6 +235,23 @@ export default function Profile() {
                 Edit Profile
               </button>
             )}
+          </div>
+
+          {/* Current Plan banner */}
+          <div className="mb-6 p-4 border rounded-lg bg-gray-50 flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-600">Current plan</p>
+              <div className={`inline-flex items-center gap-2 mt-1 text-sm font-medium px-2 py-1 rounded ${planBadgeClass(profile?.plan)}`}>
+                <span className="inline-block w-2 h-2 rounded-full bg-current opacity-60"></span>
+                {planLabel(profile?.plan)}
+              </div>
+            </div>
+            <button
+              onClick={() => router.push(`/purchase?current=${profile?.plan ?? 'free'}`)}
+              className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 font-semibold transition"
+            >
+              Upgrade
+            </button>
           </div>
 
           {error && (

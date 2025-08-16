@@ -52,6 +52,9 @@ export default function Navbar() {
     }
   };
 
+  const currentPlan = (session as any)?.user?.plan as 'free'|'plus'|'pro'|undefined;
+  const purchaseHref = currentPlan ? `/purchase?current=${currentPlan}` : '/purchase';
+
   if (loading) {
     return (
       <nav className="w-full flex items-center justify-between px-8 py-4 bg-white shadow mb-8">
@@ -110,6 +113,13 @@ export default function Navbar() {
                 onClick={() => setDropdownOpen(false)}
               >
                 Upload Audio
+              </Link>
+              <Link
+                href={purchaseHref}
+                className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition"
+                onClick={() => setDropdownOpen(false)}
+              >
+                Upgrade
               </Link>
               <hr className="my-1" />
               <button

@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
 import { useSync } from "../../lib/syncContext";
 import { getApiUrl } from "../../lib/apiUrl";
 import { authenticatedFetch } from "../../lib/authenticatedFetch";
@@ -20,6 +21,7 @@ interface User {
 
 function Dashboard() {
   const { data: session, status } = useSession();
+  const router = useRouter();
   const { triggerSync } = useSync();
   const [user, setUser] = useState<User | null>(null);
   const userLoading = status === "loading";
@@ -388,36 +390,41 @@ function Dashboard() {
             {/* Quick Actions */}
             <div className="flex flex-col gap-2 mb-6">
               <div className="flex gap-4">
-                <Link href="/upload">
+                {session?.user?.plan === 'pro' ? (
+                  <Link href="/upload">
+                    <button
+                      className="px-4 py-2 rounded bg-blue-600 text-white font-semibold transition hover:bg-blue-700 flex items-center"
+                      aria-label="Upload Audio (Pro feature)"
+                      title="Pro feature"
+                    >
+                      <span className="mr-2" aria-hidden>🔒</span>
+                      <span>Upload Audio</span>
+                      <span className="ml-2 text-[10px] uppercase tracking-wide bg-yellow-200 text-yellow-800 rounded px-1 py-0.5">Pro</span>
+                    </button>
+                  </Link>
+                ) : (
                   <button
-                    className="px-4 py-2 rounded bg-blue-600 text-white font-semibold transition hover:bg-blue-700 flex items-center"
+                    className="px-4 py-2 rounded bg-blue-600 text-white font-semibold transition hover:bg-blue-700 flex items-center opacity-90"
                     aria-label="Upload Audio (Pro feature)"
-                    title="Pro feature"
+                    title="Upgrade to Pro to upload audio"
+                    onClick={() => {
+                      router.push('/upload');
+                    }}
                   >
                     <span className="mr-2" aria-hidden>🔒</span>
                     <span>Upload Audio</span>
                     <span className="ml-2 text-[10px] uppercase tracking-wide bg-yellow-200 text-yellow-800 rounded px-1 py-0.5">Pro</span>
                   </button>
-                </Link>
-                <button
-                  className="px-4 py-2 rounded bg-green-600 text-white font-semibold transition hover:bg-green-700"
-                  onClick={handleSyncCalendar}
-                  disabled={syncingCalendar}
-                >
+                )}
+
+                <button className="px-4 py-2 rounded bg-green-600 text-white font-semibold transition hover:bg-green-700" onClick={handleSyncCalendar} disabled={syncingCalendar}>
                   {syncingCalendar ? "Syncing..." : "Sync Google Calendar"}
                 </button>
-                <button
-                  className="px-4 py-2 rounded bg-purple-600 text-white font-semibold transition hover:bg-purple-700"
-                  onClick={handleSyncMeetings}
-                  disabled={syncingMeetings}
-                >
+                <button className="px-4 py-2 rounded bg-purple-600 text-white font-semibold transition hover:bg-purple-700" onClick={handleSyncMeetings} disabled={syncingMeetings}>
                   {syncingMeetings ? "Syncing..." : "Sync Transcribed Meetings (Fireflies/Zoom)"}
                 </button>
                 {showReconnect && (
-                  <button
-                    className="px-4 py-2 rounded bg-red-600 text-white font-semibold transition hover:bg-red-700"
-                    onClick={handleReconnectGoogle}
-                  >
+                  <button className="px-4 py-2 rounded bg-red-600 text-white font-semibold transition hover:bg-red-700" onClick={handleReconnectGoogle}>
                     Reconnect Google
                   </button>
                 )}

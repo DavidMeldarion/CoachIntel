@@ -1,6 +1,6 @@
 import { NextAuthOptions } from "next-auth"
 import GoogleProvider from "next-auth/providers/google"
-import { getApiUrl } from "./apiUrl"
+import { getServerApiBase } from "./serverApi"
 
 // Extend NextAuth types to include our custom fields
 declare module 'next-auth' {
@@ -10,6 +10,7 @@ declare module 'next-auth' {
       name?: string | null;
       email?: string | null;
       image?: string | null;
+      plan?: 'free' | 'plus' | 'pro' | null;
     };
     accessToken?: string;
   }
@@ -25,8 +26,11 @@ declare module 'next-auth' {
 declare module 'next-auth/jwt' {
   interface JWT {
     accessToken?: string;
+    plan?: 'free' | 'plus' | 'pro' | null;
   }
 }
+
+const isProd = process.env.NODE_ENV === 'production';
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -42,53 +46,95 @@ export const authOptions: NextAuthOptions = {
       },
     }),
   ],
+  // In dev/local HTTP, ensure the cookie is not marked Secure so the browser stores it
+  cookies: {
+    sessionToken: {
+      name: isProd ? "__Secure-next-auth.session-token" : "next-auth.session-token",
+      options: {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        secure: isProd,
+      },
+    },
+  },
+  debug: process.env.NODE_ENV !== 'production',
+  logger: {
+    error: (...args) => console.error('[NextAuth][error]', ...args),
+    warn: (...args) => console.warn('[NextAuth][warn]', ...args),
+    debug: (...args) => console.debug('[NextAuth][debug]', ...args),
+  },
   callbacks: {
+    async signIn({ user }) {
+      console.debug('[NextAuth][signIn] start', { email: user?.email });
+      try {
+        const base = getServerApiBase();
+        const resp = await fetch(`${base}/user/${encodeURIComponent(user.email || '')}`);
+        console.debug('[NextAuth][signIn] backend /user status', resp.status);
+        if (resp.ok) {
+          const data = await resp.json();
+          console.debug('[NextAuth][signIn] user plan', data?.plan);
+        }
+      } catch (e) {
+        console.warn('[NextAuth][signIn] backend check failed (non-fatal)', (e as Error)?.message);
+      }
+      return true; // never redirect from signIn; let session cookie be set
+    },
     async jwt({ token, account, user }) {
-      // Store Google tokens and sync with backend
+      const base = getServerApiBase();
       if (account && user) {
+        console.debug('[NextAuth][jwt] start for', user.email);
         try {
-          // Use internal Docker network URL for backend communication
-          const backendUrl = process.env.NODE_ENV === 'development' 
-            ? 'http://coachintel-backend:8000'  // Docker internal network
-            : getApiUrl('');  // Production URL
-
-          // Sync user data with backend
-          const response = await fetch(`${backendUrl}/auth/nextauth-sync`, {
+          await fetch(`${base}/auth/nextauth-sync`, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               email: user.email,
               name: user.name,
-              googleAccessToken: account.access_token,
-              googleRefreshToken: account.refresh_token,
+              googleAccessToken: account.access_token || undefined,
+              googleRefreshToken: account.refresh_token || undefined,
               googleTokenExpiry: account.expires_at ? new Date(account.expires_at * 1000).toISOString() : null,
             }),
           });
-
-          if (response.ok) {
-            console.log('[NextAuth] Backend sync successful');
-          } else {
-            console.error('[NextAuth] Backend sync failed:', response.status);
+          const profileResp = await fetch(`${base}/user/${encodeURIComponent(user.email || '')}`);
+          if (profileResp.ok) {
+            const profile = await profileResp.json();
+            (token as any).plan = profile?.plan ?? null;
+            console.debug('[NextAuth][jwt] stored plan on token', (token as any).plan);
           }
         } catch (error) {
-          console.error('[NextAuth] Backend sync error:', error);
+          console.warn('[NextAuth][jwt] sync failed (non-fatal)', (error as Error)?.message);
         }
-
-        // Store tokens in JWT
-        token.accessToken = account.access_token;
-        token.refreshToken = account.refresh_token;
-        token.expiresAt = account.expires_at;
+        token.accessToken = account.access_token as string;
+        (token as any).refreshToken = account.refresh_token;
+        (token as any).expiresAt = account.expires_at;
+        (token as any).email = user.email; // store for later refreshes
+        (token as any).planCheckedAt = Date.now();
+      } else {
+        // On subsequent requests, refresh plan from backend (light TTL)
+        const email = (token as any).email as string | undefined;
+        const lastChecked = (token as any).planCheckedAt as number | undefined;
+        const shouldRefresh = !lastChecked || Date.now() - lastChecked > 15000; // 15s TTL
+        if (email && shouldRefresh) {
+          try {
+            const resp = await fetch(`${base}/user/${encodeURIComponent(email)}`);
+            if (resp.ok) {
+              const profile = await resp.json();
+              (token as any).plan = profile?.plan ?? null;
+              console.debug('[NextAuth][jwt] refreshed plan on token', (token as any).plan);
+            }
+          } catch {}
+          (token as any).planCheckedAt = Date.now();
+        }
       }
-
       return token;
     },
     async session({ session, token }) {
-      // Add custom fields to session
       if (session.user) {
         session.user.id = token.sub!;
         session.accessToken = token.accessToken as string;
+        session.user.plan = (token.plan ?? null) as any;
+        console.debug('[NextAuth][session] hydrated', { email: session.user.email, plan: session.user.plan });
       }
       return session;
     },
@@ -100,27 +146,10 @@ export const authOptions: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET,
   session: {
     strategy: 'jwt',
-    maxAge: 7 * 24 * 60 * 60, // 7 days
-    updateAge: 24 * 60 * 60, // Update session every 24 hours
+    maxAge: 7 * 24 * 60 * 60,
+    updateAge: 24 * 60 * 60,
   },
   jwt: {
-    maxAge: 7 * 24 * 60 * 60, // 7 days
-  },
-  events: {
-    async signIn({ user }) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('[NextAuth] User signed in');
-      }
-    },
-    async signOut() {
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('[NextAuth] User signed out');
-      }
-    },
-    async session({ session }) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('[NextAuth] Session accessed');
-      }
-    },
+    maxAge: 7 * 24 * 60 * 60,
   },
 }
