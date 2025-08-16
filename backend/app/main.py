@@ -201,58 +201,37 @@ async def verify_jwt_user(request: Request):
     # Try NextAuth token first
     if next_auth_token:
         print(f"[Backend] verify_jwt_user - Found NextAuth token: {next_auth_token[:20]}...")
+        # Prefer Authorization header bearer with email; fallback to x-user-email
+        auth_header = request.headers.get("authorization", "")
+        email_header = request.headers.get("x-user-email", "")
+        email = None
+        if auth_header.startswith("Bearer "):
+            email = auth_header.split("Bearer ")[1]
+        elif email_header:
+            email = email_header
+        if email:
+            user = await get_user_by_email(email)
+            if user:
+                print(f"[Backend] verify_jwt_user - Verified NextAuth user via headers: {user.email}")
+                return user
+        # If we had the cookie but no headers, treat as unauthenticated for now
+    
+    # Legacy session/user cookies
+    if session_token or user_token:
         try:
-            # NextAuth tokens are JWE (encrypted), so we can't decode them directly
-            # Instead, let's extract user email from the Authorization header if present
-            auth_header = request.headers.get("authorization", "")
-            if auth_header and auth_header.startswith("Bearer "):
-                email = auth_header.split("Bearer ")[1]
-                user = await get_user_by_email(email)
-                if user:
-                    print(f"[Backend] verify_jwt_user - Successfully verified NextAuth user: {user.email}")
-                    return user
-            
-            # Fallback: If no Authorization header, check if we have a user email in a custom header
-            user_email = request.headers.get("x-user-email", "")
-            print(f"[Backend] verify_jwt_user - x-user-email header: '{user_email}'")
-            if user_email:
-                user = await get_user_by_email(user_email)
-                if user:
-                    print(f"[Backend] verify_jwt_user - Successfully verified NextAuth user via header: {user.email}")
-                    return user
-                else:
-                    print(f"[Backend] verify_jwt_user - User not found in database: {user_email}")
-            
-            # If NextAuth token exists but we can't verify the user, return 401
-            print("[Backend] verify_jwt_user - NextAuth token found but no user context")
-            raise HTTPException(status_code=401, detail="NextAuth session found but user verification failed")
-            
-        except Exception as e:
-            print(f"[Backend] verify_jwt_user - NextAuth verification failed: {e}")
-            raise HTTPException(status_code=401, detail="NextAuth session verification failed")
-    
-    # Fallback to legacy JWT verification for existing sessions
-    token = session_token or user_token
-    print(f"[Backend] verify_jwt_user - extracted legacy token: {token[:20] if token else None}... (from {'session' if session_token else 'user'} cookie)")
-    
-    if not token:
-        print("[Backend] verify_jwt_user - No token found, raising 401")
-        raise HTTPException(status_code=401, detail="No authentication token")
-    
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email = payload.get("sub") or payload.get("email")  # Support both formats
-        if not email:
+            payload = jwt.decode(user_token or session_token, SECRET_KEY, algorithms=[ALGORITHM])
+            email = payload.get("sub")
+            user = await get_user_by_email(email)
+            if user:
+                print(f"[Backend] verify_jwt_user - Successfully verified legacy user: {user.email}")
+                return user
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token expired")
+        except jwt.InvalidTokenError:
             raise HTTPException(status_code=401, detail="Invalid token")
-        user = await get_user_by_email(email)
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        print(f"[Backend] verify_jwt_user - Successfully verified legacy user: {user.email}")
-        return user
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    print("[Backend] verify_jwt_user - No token found, raising 401")
+    raise HTTPException(status_code=401, detail="Not authenticated")
 
 @app.get("/")
 def root():

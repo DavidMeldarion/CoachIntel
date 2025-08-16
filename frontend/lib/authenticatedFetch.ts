@@ -9,7 +9,7 @@ export async function authenticatedFetch(
   const session = await getSession();
   
   const headers: Record<string, string> = {
-    ...options.headers as Record<string, string>,
+    ...(options.headers as Record<string, string>),
   };
   
   // Add user email header if session exists
@@ -18,8 +18,12 @@ export async function authenticatedFetch(
   }
   
   console.log(`[authenticatedFetch] Making request to ${endpoint} with email: ${session?.user?.email}`);
+
+  // Always go through our Next.js API proxy to keep cookies same-origin in prod
+  const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const proxied = `/api${path}`;
   
-  return fetch(getApiUrl(endpoint), {
+  return fetch(proxied, {
     ...options,
     headers,
     credentials: "include",
