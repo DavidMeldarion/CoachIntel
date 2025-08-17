@@ -9,12 +9,18 @@ export async function GET(request: NextRequest) {
   const status = url.searchParams.get('status');
   const limit = url.searchParams.get('limit');
   const offset = url.searchParams.get('offset');
+  const date_from = url.searchParams.get('date_from');
+  const date_to = url.searchParams.get('date_to');
+  const tag = url.searchParams.get('tag');
 
   const backend = new URL(`${API_BASE}/leads`);
   if (q) backend.searchParams.set('q', q);
   if (status) backend.searchParams.set('status', status);
   if (limit) backend.searchParams.set('limit', limit);
   if (offset) backend.searchParams.set('offset', offset);
+  if (date_from) backend.searchParams.set('date_from', date_from);
+  if (date_to) backend.searchParams.set('date_to', date_to);
+  if (tag) backend.searchParams.set('tag', tag);
 
   const token = await getToken({ req: request as any, secret: process.env.NEXTAUTH_SECRET });
   const headers: Record<string, string> = {};

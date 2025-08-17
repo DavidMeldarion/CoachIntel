@@ -36,6 +36,9 @@ from app.integrations import get_fireflies_meeting_details, test_fireflies_api_k
 from app.worker import celery_app, sync_fireflies_meetings
 from .config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_TOKEN_URL, GOOGLE_CALENDAR_EVENTS_URL
 
+# Import leads router
+from app.routers.leads import router as leads_router
+
 # Frontend URL configuration with both www and non-www variants
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 # Create both www and non-www variants for CORS
@@ -81,6 +84,40 @@ async def trust_proxy_headers(request: Request, call_next):
 
 # Password hashing setup
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# -------------------------
+# HMAC utils for unsubscribe links
+# -------------------------
+
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _b64url_decode(data: str) -> bytes:
+    padding = '=' * ((4 - len(data) % 4) % 4)
+    return base64.urlsafe_b64decode((data + padding).encode())
+
+
+def sign_hmac_token(payload: dict, secret: str, expires_in_seconds: int = 60 * 60 * 24 * 30) -> str:
+    body = json.dumps({**payload, "exp": int(time.time()) + expires_in_seconds}, separators=(",", ":")).encode()
+    sig = hmac.new(secret.encode(), body, hashlib.sha256).digest()
+    return f"{_b64url_encode(body)}.{_b64url_encode(sig)}"
+
+
+def verify_hmac_token(token: str, secret: str) -> dict:
+    try:
+        body_b64, sig_b64 = token.split(".")
+        body = _b64url_decode(body_b64)
+        sig = _b64url_decode(sig_b64)
+        expected = hmac.new(secret.encode(), body, hashlib.sha256).digest()
+        if not hmac.compare_digest(sig, expected):
+            raise ValueError("Invalid signature")
+        data = json.loads(body.decode())
+        if int(time.time()) > int(data.get("exp", 0)):
+            raise ValueError("Token expired")
+        return data
+    except Exception as e:
+        raise ValueError(f"Invalid token: {e}")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a plain password against its hash."""
@@ -296,6 +333,9 @@ async def create_public_lead(payload: LeadPublicIn):
 # End CRM endpoints
 # -------------------------
 
+# Include leads router
+app.include_router(leads_router)
+
 # JWT/session verification dependency
 async def verify_jwt_user(request: Request):
     cookie_header = request.headers.get("cookie", "")
@@ -357,6 +397,37 @@ async def verify_jwt_user(request: Request):
 @app.get("/")
 def root():
     return {"message": "CoachIntel backend API"}
+
+# -------------------------
+# Unsubscribe endpoint using HMAC token
+# -------------------------
+UNSUBSCRIBE_SECRET = os.getenv("UNSUBSCRIBE_SECRET", SECRET_KEY)
+
+@app.get("/unsubscribe")
+async def unsubscribe(request: Request):
+    token = request.query_params.get("t")
+    if not token:
+        raise HTTPException(status_code=400, detail="Missing token")
+    try:
+        data = verify_hmac_token(token, UNSUBSCRIBE_SECRET)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid token: {e}")
+
+    email = data.get("email")
+    channel = data.get("channel", "email")
+    if not email:
+        raise HTTPException(status_code=400, detail="Invalid payload")
+
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(select(Lead).where(Lead.email == email))
+        lead = res.scalar_one_or_none()
+        if not lead:
+            # Render a friendly HTML even if not found
+            return HTMLResponse("<h3>You have been unsubscribed.</h3>")
+        # Record opt-out consent
+        session.add(Consent(lead_id=lead.id, channel=channel, status='opted_out', source='unsubscribe-link'))
+        await session.commit()
+    return HTMLResponse("<h3>You have been unsubscribed.</h3>")
 
 # Secure endpoints
 # @app.post("/upload-audio/")
@@ -1130,494 +1201,164 @@ async def transcribe(user: User = Depends(verify_jwt_user)):
     return JSONResponse(status_code=202, content={"status": "accepted"})
 
 # -------------------------
-# CRM: Leads router
+# Postmark webhook and event recorder
 # -------------------------
-leads_router = APIRouter(prefix="/leads", tags=["leads"])
 
-ALLOWED_LEAD_STATUS = {"waitlist", "invited", "converted", "lost"}
-
-class LeadCreate(BaseModel):
-    email: str
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    phone: Optional[str] = None
-    source: Optional[str] = None
-    utm_source: Optional[str] = None
-    utm_medium: Optional[str] = None
-    utm_campaign: Optional[str] = None
-    tags: Optional[List[str]] = None
-    consent_email: Optional[bool] = None
-    consent_sms: Optional[bool] = None
-
-    @validator("email")
-    def _valid_email(cls, v):
-        import re
-        if not re.match(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$', v or ""):
-            raise ValueError("Invalid email format")
-        return v.lower()
-
-    @validator("phone")
-    def _valid_phone(cls, v):
-        if v:
-            import re
-            if not re.match(r'^[\+]?[\d\s\-\(\)]{10,20}$', v):
-                raise ValueError("Invalid phone number format")
-        return v
-
-class LeadOut(BaseModel):
-    id: str
-    email: str
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    status: str
-    tags: List[str] | None = None
-    created_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
-
-class LeadDetailOut(BaseModel):
-    id: str
-    email: str
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    status: str
-    tags: List[str] | None = None
-    created_at: Optional[datetime] = None
-    notes: Optional[str] = None
-    events: Optional[List[dict]] = None
-
-class LeadStatusUpdate(BaseModel):
-    status: str
-
-# Paged response for listing leads
-class LeadsPageOut(BaseModel):
-    items: List[LeadOut]
-    total: int
-    limit: int
-    offset: int
-
-class LeadNotesIn(BaseModel):
-    notes: Optional[str] = None
-
-@leads_router.post("/", response_model=LeadOut)
-async def upsert_lead(
-    payload: LeadCreate,
-    user: User = Depends(verify_jwt_user),
-):
-    """Upsert a lead by email within the same org. If new, set status=waitlist and
-    record consent rows for provided email/sms booleans."""
-    org_id = getattr(user, 'org_id', None)
+async def record_event(lead: Lead, type: str, channel: str = 'email', provider_id: str | None = None, meta: dict | None = None):
     async with AsyncSessionLocal() as session:
-        # Find existing by (org_id, email)
-        result = await session.execute(
-            select(Lead).where(
-                Lead.email == payload.email,
-                Lead.org_id == (org_id if org_id is not None else None)  # noqa: E711
-            )
-        )
-        lead = result.scalar_one_or_none()
-        is_new = lead is None
-        if is_new:
-            lead = Lead(
-                email=payload.email,
-                first_name=payload.first_name,
-                last_name=payload.last_name,
-                phone=payload.phone,
-                status='waitlist',
-                source=payload.source,
-                utm_source=payload.utm_source,
-                utm_medium=payload.utm_medium,
-                utm_campaign=payload.utm_campaign,
-            )
-            if org_id is not None:
-                lead.org_id = org_id
-            if payload.tags:
-                # normalize tags
-                norm_tags = [t.strip() for t in payload.tags if t and t.strip()]
-                lead.tags = norm_tags
-            session.add(lead)
-        else:
-            # Update fields
-            lead.first_name = payload.first_name or lead.first_name
-            lead.last_name = payload.last_name or lead.last_name
-            lead.phone = payload.phone or lead.phone
-            lead.source = payload.source or lead.source
-            lead.utm_source = payload.utm_source or lead.utm_source
-            lead.utm_medium = payload.utm_medium or lead.utm_medium
-            lead.utm_campaign = payload.utm_campaign or lead.utm_campaign
-            if payload.tags is not None:
-                lead.tags = [t.strip() for t in payload.tags if t and t.strip()]
-
-        # Consents (append history entries)
-        def _add_consent(channel: str, opted: bool):
-            c = Consent(
-                lead=lead,
-                channel=channel,
-                status='opted_in' if opted else 'opted_out',
-                source=payload.source or 'leads-api',
-            )
-            if org_id is not None:
-                c.org_id = org_id
-            session.add(c)
-
-        if payload.consent_email is not None:
-            _add_consent('email', payload.consent_email)
-        if payload.consent_sms is not None:
-            _add_consent('sms', payload.consent_sms)
-
-        await session.commit()
-        await session.refresh(lead)
-
-        return LeadOut(
-            id=str(lead.id),
-            email=lead.email,
-            first_name=lead.first_name,
-            last_name=lead.last_name,
-            status=lead.status,
-            tags=list(lead.tags or []),
-            created_at=lead.created_at,
-        )
-
-@leads_router.get("/", response_model=LeadsPageOut)
-async def list_leads(
-    q: Optional[str] = Query(default=None, description="Search email or name"),
-    status: Optional[str] = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-    user: User = Depends(verify_jwt_user),
-):
-    """Search and list leads for the user's org with pagination metadata.
-    Returns a paged object containing items and total.
-    """
-    org_id = getattr(user, 'org_id', None)
-    async with AsyncSessionLocal() as session:
-        conditions = []
-        if org_id is not None:
-            conditions.append(Lead.org_id == org_id)
-        else:
-            conditions.append(Lead.org_id == None)  # noqa: E711
-        if status:
-            if status not in ALLOWED_LEAD_STATUS:
-                raise HTTPException(status_code=400, detail="Invalid status filter")
-            conditions.append(Lead.status == status)
-        if q:
-            like = f"%{q.lower()}%"
-            conditions.append(
-                or_(
-                    Lead.email.ilike(like),
-                    Lead.first_name.ilike(like),
-                    Lead.last_name.ilike(like),
-                )
-            )
-        # Total count
-        count_stmt = select(func.count()).select_from(Lead).where(*conditions)
-        total_res = await session.execute(count_stmt)
-        total = int(total_res.scalar() or 0)
-        # Page of items
-        data_stmt = (
-            select(Lead)
-            .where(*conditions)
-            .order_by(Lead.created_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
-        result = await session.execute(data_stmt)
-        rows = result.scalars().all()
-        items = [
-            LeadOut(
-                id=str(l.id),
-                email=l.email,
-                first_name=l.first_name,
-                last_name=l.last_name,
-                status=l.status,
-                tags=list(l.tags or []),
-                created_at=l.created_at,
-            )
-            for l in rows
-        ]
-        return LeadsPageOut(items=items, total=total, limit=limit, offset=offset)
-
-@leads_router.get("/{lead_id}", response_model=LeadDetailOut)
-async def get_lead_detail(
-    lead_id: UUID_t,
-    user: User = Depends(verify_jwt_user),
-):
-    org_id = getattr(user, 'org_id', None)
-    async with AsyncSessionLocal() as session:
-        stmt = select(Lead).where(Lead.id == lead_id)
-        if org_id is not None:
-            stmt = stmt.where(Lead.org_id == org_id)
-        else:
-            stmt = stmt.where(Lead.org_id == None)  # noqa: E711
-        res = await session.execute(stmt)
-        lead = res.scalar_one_or_none()
-        if not lead:
-            raise HTTPException(status_code=404, detail="Lead not found")
-        # fetch events separately, most recent first
-        evt_stmt = (
-            select(MessageEvent)
-            .where(MessageEvent.lead_id == lead.id)
-            .order_by(MessageEvent.occurred_at.desc())
-            .limit(100)
-        )
-        ev_res = await session.execute(evt_stmt)
-        evs = ev_res.scalars().all()
-        return LeadDetailOut(
-            id=str(lead.id),
-            email=lead.email,
-            first_name=lead.first_name,
-            last_name=lead.last_name,
-            status=lead.status,
-            tags=list(lead.tags or []),
-            created_at=lead.created_at,
-            notes=lead.notes,
-            events=[{"type": e.type, "occurred_at": e.occurred_at} for e in evs],
-        )
-
-@leads_router.patch("/{lead_id}", response_model=LeadOut)
-async def update_lead_notes(
-    lead_id: UUID_t,
-    body: LeadNotesIn,
-    user: User = Depends(verify_jwt_user),
-):
-    org_id = getattr(user, 'org_id', None)
-    async with AsyncSessionLocal() as session:
-        stmt = select(Lead).where(Lead.id == lead_id)
-        if org_id is not None:
-            stmt = stmt.where(Lead.org_id == org_id)
-        else:
-            stmt = stmt.where(Lead.org_id == None)  # noqa: E711
-        res = await session.execute(stmt)
-        lead = res.scalar_one_or_none()
-        if not lead:
-            raise HTTPException(status_code=404, detail="Lead not found")
-        lead.notes = (body.notes or '').strip()
-        await session.commit()
-        await session.refresh(lead)
-        return LeadOut(
-            id=str(lead.id),
-            email=lead.email,
-            first_name=lead.first_name,
-            last_name=lead.last_name,
-            status=lead.status,
-            tags=list(lead.tags or []),
-            created_at=lead.created_at,
-        )
-
-@leads_router.post("/{lead_id}/status", response_model=LeadOut)
-async def update_lead_status(
-    lead_id: UUID_t,
-    body: LeadStatusUpdate,
-    user: User = Depends(verify_jwt_user),
-):
-    """Update a lead's status after validating it is one of the allowed values."""
-    if body.status not in ALLOWED_LEAD_STATUS:
-        raise HTTPException(status_code=400, detail="Invalid status value")
-    org_id = getattr(user, 'org_id', None)
-    async with AsyncSessionLocal() as session:
-        stmt = select(Lead).where(Lead.id == lead_id)
-        if org_id is not None:
-            stmt = stmt.where(Lead.org_id == org_id)
-        else:
-            stmt = stmt.where(Lead.org_id == None)  # noqa: E711
-        result = await session.execute(stmt)
-        lead = result.scalar_one_or_none()
-        if not lead:
-            raise HTTPException(status_code=404, detail="Lead not found")
-        lead.status = body.status
-        await session.commit()
-        await session.refresh(lead)
-        return LeadOut(
-            id=str(lead.id),
-            email=lead.email,
-            first_name=lead.first_name,
-            last_name=lead.last_name,
-            status=lead.status,
-            tags=list(lead.tags or []),
-            created_at=lead.created_at,
-        )
-
-# Helper to record message events (for provider callbacks or after sending)
-async def record_event(lead_id: str, channel: str, type: str, meta: dict | None = None, provider_id: str | None = None):
-    """Insert a MessageEvent row for a lead.
-    channel: 'email'|'sms'; type: 'send'|'open'|'click'|'bounce'|'complaint'
-    """
-    async with AsyncSessionLocal() as session:
-        evt = MessageEvent(
-            lead_id=lead_id,
-            channel=channel,
-            type=type,
-            provider_id=provider_id,
-            meta=meta or {},
-        )
-        session.add(evt)
+        ev = MessageEvent(lead_id=lead.id, channel=channel, type=type, provider_id=provider_id, meta=meta or {})
+        session.add(ev)
         await session.commit()
 
-# -------------------------
-# Small HMAC util
-# -------------------------
-_DEF_PAD = {0: '', 2: '==', 3: '='}
-
-def _b64url_encode(b: bytes) -> str:
-    return base64.urlsafe_b64encode(b).decode().rstrip('=')
-
-def _b64url_decode(s: str) -> bytes:
-    pad = _DEF_PAD[len(s) % 4]
-    return base64.urlsafe_b64decode(s + pad)
-
-def sign_hmac_token(text: str) -> str:
-    mac = hmac.new(SECRET_KEY.encode('utf-8'), text.encode('utf-8'), hashlib.sha256).digest()
-    return _b64url_encode(mac)
-
-def verify_hmac_token(text: str, token: str) -> bool:
-    try:
-        expected = sign_hmac_token(text)
-        # Constant-time compare
-        return hmac.compare_digest(expected, token)
-    except Exception:
-        return False
-
-# -------------------------
-# Unsubscribe endpoint
-# -------------------------
-@app.get("/unsubscribe")
-async def unsubscribe(lead_id: str, token: str):
-    """
-    GET /unsubscribe?lead_id=...&token=...
-    Token is base64url(HMAC_SHA256(lead_id, SECRET_KEY)). If valid, mark email consent as opted_out
-    by inserting a new Consent(channel='email', status='opted_out'). Always render a tiny HTML page.
-    """
-    valid = verify_hmac_token(lead_id, token)
-    # Default message regardless of validity to avoid leaking info
-    html = "<html><body><p>You're unsubscribed.</p></body></html>"
-    if not valid:
-        return HTMLResponse(content=html, status_code=200)
-
-    # Proceed to flip consent
-    try:
-        lid = UUID_t(lead_id)
-    except Exception:
-        return HTMLResponse(content=html, status_code=200)
-
-    try:
-        async with AsyncSessionLocal() as session:
-            # Find lead
-            result = await session.execute(select(Lead).where(Lead.id == lid))
-            lead = result.scalar_one_or_none()
-            if lead:
-                c = Consent(
-                    lead_id=lead.id,
-                    org_id=getattr(lead, 'org_id', None),
-                    channel='email',
-                    status='opted_out',
-                    source='unsubscribe',
-                )
-                session.add(c)
-                await session.commit()
-                # Optionally record a complaint event? Spec only requires consent change.
-        return HTMLResponse(content=html, status_code=200)
-    except Exception:
-        # Do not log PII; intentionally swallow details
-        return HTMLResponse(content=html, status_code=200)
-
-# -------------------------
-# Webhooks: Postmark
-# -------------------------
 @app.post("/webhooks/postmark")
 async def postmark_webhook(request: Request):
-    """
-    Accept Postmark webhooks and record events.
-    Expected JSON shapes (examples):
-    - Bounce:
-      {
-        "RecordType": "Bounce",
-        "Type": "HardBounce" | "SpamComplaint" | ...,
-        "MessageID": "<uuid>",
-        "Email": "user@example.com",
-        "Tag": "optional-tag",
-        "ServerID": 12345,
-        "Description": "...",
-        "BouncedRecipients": [{"Email": "user@example.com"}],
-        "Metadata": {"lead_id": "<uuid>"}
-      }
-    - Delivery/Open/Click events exist, but here we map only bounces and complaints.
-    """
     try:
         payload = await request.json()
     except Exception:
-        # Malformed JSON; ignore
-        return JSONResponse(status_code=400, content={"ok": False})
+        raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    # Avoid logging PII; only log minimal type info
-    rec_type = str(payload.get("RecordType", "")).lower()
-    p_type = str(payload.get("Type", "")).lower()
+    message_id = payload.get("MessageID") or payload.get("Message-Id")
+    email = (payload.get("Recipient") or payload.get("Email") or "").lower()
+    event_type = payload.get("RecordType") or payload.get("Type")
 
-    # Only process bounces and spam complaints
-    if rec_type != "bounce":
-        return JSONResponse({"ok": True})
+    if not email or not event_type:
+        return JSONResponse(status_code=200, content={"ok": True})
 
-    event_type = None
-    if p_type == "spamcomplaint":
-        event_type = "complaint"
-    else:
-        event_type = "bounce"
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(select(Lead).where(Lead.email == email))
+        lead = res.scalar_one_or_none()
+        if not lead:
+            return JSONResponse(status_code=200, content={"ok": True})
+        # Map Postmark events
+        event_map = {
+            'Open': 'open',
+            'Click': 'click',
+            'Bounce': 'bounce',
+            'SpamComplaint': 'complaint',
+            'Delivery': 'send',
+            'Transient': 'bounce',
+            'Permanent': 'bounce',
+        }
+        mapped = event_map.get(event_type, None)
+        if mapped:
+            await record_event(lead, mapped, channel='email', provider_id=message_id, meta=payload)
+            # If bounce/complaint, auto opt-out
+            if mapped in {"bounce", "complaint"}:
+                session.add(Consent(lead_id=lead.id, channel='email', status='opted_out', source='postmark-webhook'))
+                await session.commit()
 
-    # Attempt to resolve lead: prefer metadata.lead_id; else by email
-    lead_uuid = None
-    meta = payload.get("Metadata") or {}
-    if isinstance(meta, dict) and meta.get("lead_id"):
-        try:
-            lead_uuid = UUID_t(str(meta.get("lead_id")))
-        except Exception:
-            lead_uuid = None
-
-    email = payload.get("Email")
-    if not lead_uuid and email:
-        # Attempt lookup by email (first match)
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(Lead).where(Lead.email == email).limit(1))
-            lead = res.scalar_one_or_none()
-            if lead:
-                lead_uuid = lead.id
-
-    if not lead_uuid:
-        # Nothing to do
-        return JSONResponse({"ok": True})
-
-    provider_id = payload.get("MessageID")
-    # Build safe meta (exclude PII fields like Email)
-    safe_meta = {
-        "record_type": payload.get("RecordType"),
-        "type": payload.get("Type"),
-        "tag": payload.get("Tag"),
-        "server_id": payload.get("ServerID"),
-        "description": payload.get("Description"),
-    }
-
-    try:
-        # Record MessageEvent and flip consent to opted_out for email channel
-        await record_event(lead_id=str(lead_uuid), channel='email', type=event_type, meta=safe_meta, provider_id=str(provider_id) if provider_id else None)
-        async with AsyncSessionLocal() as session:
-            cons = Consent(
-                lead_id=lead_uuid,
-                channel='email',
-                status='opted_out',
-                source='postmark-webhook',
-            )
-            # Attempt to attach org if known
-            res = await session.execute(select(Lead).where(Lead.id == lead_uuid))
-            lead = res.scalar_one_or_none()
-            if lead and getattr(lead, 'org_id', None) is not None:
-                cons.org_id = lead.org_id
-            session.add(cons)
-            await session.commit()
-    except Exception:
-        # Silent failure; avoid exposing internals
-        return JSONResponse({"ok": True})
-
-    return JSONResponse({"ok": True})
+    return JSONResponse(status_code=200, content={"ok": True})
 
 # -------------------------
-# End Webhooks
+# CRM: Leads router
 # -------------------------
+# leads_router = APIRouter(prefix="/leads", tags=["leads"])  # moved to app.routers.leads
+
+# ALLOWED_LEAD_STATUS = {"waitlist", "invited", "converted", "lost"}
+
+# class LeadCreate(BaseModel):
+#     email: str
+#     first_name: Optional[str] = None
+#     last_name: Optional[str] = None
+#     phone: Optional[str] = None
+#     source: Optional[str] = None
+#     utm_source: Optional[str] = None
+#     utm_medium: Optional[str] = None
+#     utm_campaign: Optional[str] = None
+#     tags: Optional[List[str]] = None
+#     consent_email: Optional[bool] = None
+#     consent_sms: Optional[bool] = None
+
+#     @validator("email")
+#     def _valid_email(cls, v):
+#         import re
+#         if not re.match(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$', v or ""):
+#             raise ValueError("Invalid email format")
+#         return v.lower()
+
+#     @validator("phone")
+#     def _valid_phone(cls, v):
+#         if v:
+#             import re
+#             if not re.match(r'^[\+]?[\d\s\-\(\)]{10,20}$', v):
+#                 raise ValueError("Invalid phone number format")
+#         return v
+
+# class LeadOut(BaseModel):
+#     id: str
+#     email: str
+#     first_name: Optional[str] = None
+#     last_name: Optional[str] = None
+#     status: str
+#     tags: List[str] | None = None
+#     created_at: Optional[datetime] = None
+
+#     class Config:
+#         from_attributes = True
+
+# class LeadDetailOut(BaseModel):
+#     id: str
+#     email: str
+#     first_name: Optional[str] = None
+#     last_name: Optional[str] = None
+#     status: str
+#     tags: List[str] | None = None
+#     created_at: Optional[datetime] = None
+#     notes: Optional[str] = None
+#     events: Optional[List[dict]] = None
+
+# class LeadStatusUpdate(BaseModel):
+#     status: str
+
+# # Paged response for listing leads
+# class LeadsPageOut(BaseModel):
+#     items: List[LeadOut]
+#     total: int
+#     limit: int
+#     offset: int
+
+# class LeadNotesIn(BaseModel):
+#     notes: Optional[str] = None
+
+# @leads_router.post("/", response_model=LeadOut)
+# async def upsert_lead(
+#     payload: LeadCreate,
+#     user: User = Depends(verify_jwt_user),
+# ):
+#     ...
+
+# @leads_router.get("/", response_model=LeadsPageOut)
+# async def list_leads(
+#     q: Optional[str] = Query(default=None, description="Search email or name"),
+#     status: Optional[str] = Query(default=None),
+#     limit: int = Query(default=50, ge=1, le=200),
+#     offset: int = Query(default=0, ge=0),
+#     user: User = Depends(verify_jwt_user),
+# ):
+#     ...
+
+# @leads_router.get("/{lead_id}", response_model=LeadDetailOut)
+# async def get_lead_detail(
+#     lead_id: UUID_t,
+#     user: User = Depends(verify_jwt_user),
+# ):
+#     ...
+
+# @leads_router.patch("/{lead_id}", response_model=LeadOut)
+# async def update_lead_notes(
+#     lead_id: UUID_t,
+#     body: LeadNotesIn,
+#     user: User = Depends(verify_jwt_user),
+# ):
+#     ...
+
+# @leads_router.post("/{lead_id}/status", response_model=LeadOut)
+# async def update_lead_status(
+#     lead_id: UUID_t,
+#     body: LeadStatusUpdate,
+#     user: User = Depends(verify_jwt_user),
+# ):
+#     ...
+
+# async def record_event(...):
+#     ...

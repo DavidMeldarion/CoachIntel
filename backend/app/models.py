@@ -14,6 +14,12 @@ from sqlalchemy import Enum as SAEnum, UniqueConstraint, Index, func
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 import uuid
 
+# Added typing and pydantic for API DTOs
+from typing import List, Optional, Dict, Literal
+from pydantic import BaseModel, EmailStr
+from uuid import UUID as UUID_t
+from datetime import datetime, date
+
 Base = declarative_base()
 
 # Generate this key once and store securely (e.g., in .env)
@@ -245,6 +251,62 @@ class MessageEvent(Base):
             'meta': self.meta or {},
             'occurred_at': self.occurred_at.isoformat() if self.occurred_at else None,
         }
+
+# -------------------------
+# API DTOs (moved from app/schemas.py)
+# -------------------------
+
+LeadStatus = Literal["waitlist", "invited", "converted", "lost"]
+ConsentStatus = Literal["opted_in", "opted_out", "unknown"]
+Channel = Literal["email", "sms"]
+EventType = Literal["send", "open", "click", "bounce", "complaint"]
+
+class LeadListItemOut(BaseModel):
+    id: UUID_t
+    email: EmailStr
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone: Optional[str] = None
+    status: LeadStatus
+    tags: List[str] = []
+    created_at: datetime
+
+class LeadDetailOut(LeadListItemOut):
+    source: Optional[str] = None
+    utm_source: Optional[str] = None
+    utm_medium: Optional[str] = None
+    utm_campaign: Optional[str] = None
+    notes: Optional[str] = None
+    last_contacted_at: Optional[datetime] = None
+    consent_email: ConsentStatus
+    consent_sms: ConsentStatus
+
+class LeadEventOut(BaseModel):
+    id: UUID_t
+    channel: Channel
+    type: EventType
+    occurred_at: datetime
+    meta: Dict = {}
+
+class LeadListResponse(BaseModel):
+    items: List[LeadListItemOut]
+    total: int
+    limit: int
+    offset: int
+
+class LeadExportFilterIn(BaseModel):
+    status: Optional[str] = None
+    q: Optional[str] = None
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+    tag: Optional[str] = None
+
+class LeadPatchIn(BaseModel):
+    tags: Optional[List[str]] = None
+    phone: Optional[str] = None
+
+    class Config:
+        orm_mode = True
 
 # Async engine for FastAPI app
 ASYNC_DATABASE_URL = os.getenv("ASYNC_DATABASE_URL")

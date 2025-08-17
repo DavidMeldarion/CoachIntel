@@ -2,6 +2,24 @@
 
 This is the Next.js (App Router) + Tailwind CSS frontend for CoachIntel.
 
+## Admin
+- Admin route: `/admin/leads` (auth required)
+- Env:
+  - `NEXT_PUBLIC_API_URL` or `NEXT_PUBLIC_BROWSER_API_URL` for direct backend access
+- The app proxies requests from `/api/*` to the FastAPI server using server API routes and passes `x-user-email` from the NextAuth session.
+
+## Endpoints used (backend)
+- GET `/leads` with filters: `q,status,tag,date_from,date_to,limit,offset`
+- GET `/leads/{id}`
+- GET `/leads/{id}/events`
+- POST `/leads/{id}/status`
+- PATCH `/leads/{id}` (phone, tags)
+- PATCH `/leads/{id}/notes`
+- POST `/leads/export` (CSV)
+
+### Mocking in dev
+You can run the FastAPI backend locally or return dummy data from the Next.js API routes if needed.
+
 ## Features Scaffolded
 - Dummy auth (Google Sign-In placeholder)
 - Dashboard page
