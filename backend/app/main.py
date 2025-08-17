@@ -18,6 +18,8 @@ import logging
 import hmac, hashlib, base64
 from uuid import UUID as UUID_t
 from sqlalchemy import select, or_, func
+# Import password hashing context
+from passlib.context import CryptContext
 
 # Frontend URL configuration with both www and non-www variants
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
