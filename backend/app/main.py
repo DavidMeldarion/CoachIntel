@@ -1,14 +1,12 @@
+from __future__ import annotations
 import os
 import time
 import jwt
 import json
-from fastapi import FastAPI, HTTPException, UploadFile, File, Query, Request, Body, Depends
+from fastapi import APIRouter, HTTPException, Request, FastAPI, HTTPException, UploadFile, File, Query, Request, Body, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, validator, Field, ValidationError
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse
-# Also return small HTML pages
-from fastapi.responses import HTMLResponse
+from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
 import httpx
 from urllib.parse import urlencode
 from datetime import datetime, timedelta
@@ -20,6 +18,22 @@ from uuid import UUID as UUID_t
 from sqlalchemy import select, or_, func
 # Import password hashing context
 from passlib.context import CryptContext
+# Added typing and external imports
+from typing import Optional, List, Dict
+from celery.result import AsyncResult
+from app.models import (
+    User,
+    Meeting,
+    Transcript,
+    Lead,
+    Consent,
+    MessageEvent,
+    AsyncSessionLocal,
+    get_user_by_email,
+    create_or_update_user,
+)
+from app.integrations import get_fireflies_meeting_details, test_fireflies_api_key
+from app.worker import celery_app, sync_fireflies_meetings
 
 # Frontend URL configuration with both www and non-www variants
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
@@ -1080,7 +1094,7 @@ def require_plan(user: User, allowed: set[str]):
     if plan not in allowed:
         raise HTTPException(status_code=403, detail=f"Plan '{plan}' is not permitted for this action")
 
-from fastapi import status
+
 
 @app.post("/summarize-missing-transcripts", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_summarize_missing_transcripts(user: User = Depends(verify_jwt_user)):
