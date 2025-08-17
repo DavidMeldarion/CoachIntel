@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerApiBase } from '../../lib/serverApi';
+import { getServerApiBase } from '../../../lib/serverApi';
 import { getToken } from 'next-auth/jwt';
 
 export async function GET(request: NextRequest) {
