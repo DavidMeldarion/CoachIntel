@@ -34,6 +34,7 @@ from app.models import (
 )
 from app.integrations import get_fireflies_meeting_details, test_fireflies_api_key
 from app.worker import celery_app, sync_fireflies_meetings
+from .config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_TOKEN_URL, GOOGLE_CALENDAR_EVENTS_URL
 
 # Frontend URL configuration with both www and non-www variants
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
