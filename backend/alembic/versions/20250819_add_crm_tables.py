@@ -19,21 +19,33 @@ depends_on = None
 def upgrade():
     bind = op.get_bind()
 
-    # Create PostgreSQL ENUM types
-    lead_status = sa.Enum('waitlist', 'invited', 'converted', 'lost', name='lead_status')
-    consent_channel = sa.Enum('email', 'sms', name='consent_channel')
-    consent_status = sa.Enum('opted_in', 'opted_out', 'unknown', name='consent_status')
-    message_channel = sa.Enum('email', 'sms', name='message_channel')
-    message_event_type = sa.Enum('send', 'open', 'click', 'bounce', 'complaint', name='message_event_type')
+    # Create PostgreSQL ENUM types idempotently
+    op.execute("""
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'lead_status') THEN
+        CREATE TYPE lead_status AS ENUM ('waitlist', 'invited', 'converted', 'lost');
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'consent_channel') THEN
+        CREATE TYPE consent_channel AS ENUM ('email', 'sms');
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'consent_status') THEN
+        CREATE TYPE consent_status AS ENUM ('opted_in', 'opted_out', 'unknown');
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'message_channel') THEN
+        CREATE TYPE message_channel AS ENUM ('email', 'sms');
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'message_event_type') THEN
+        CREATE TYPE message_event_type AS ENUM ('send', 'open', 'click', 'bounce', 'complaint');
+      END IF;
+    END $$;
+    """)
 
-    lead_status.create(bind, checkfirst=True)
-    consent_channel.create(bind, checkfirst=True)
-    consent_status.create(bind, checkfirst=True)
-    message_channel.create(bind, checkfirst=True)
-    message_event_type.create(bind, checkfirst=True)
-
-    # Add password column to users (nullable for OAuth-only accounts)
-    op.add_column('users', sa.Column('password', sa.String(), nullable=True))
+    # Reuse enums without attempting to create them during table DDL
+    lead_status = pg.ENUM('waitlist', 'invited', 'converted', 'lost', name='lead_status', create_type=False)
+    consent_channel = pg.ENUM('email', 'sms', name='consent_channel', create_type=False)
+    consent_status = pg.ENUM('opted_in', 'opted_out', 'unknown', name='consent_status', create_type=False)
+    message_channel = pg.ENUM('email', 'sms', name='message_channel', create_type=False)
+    message_event_type = pg.ENUM('send', 'open', 'click', 'bounce', 'complaint', name='message_event_type', create_type=False)
 
     # leads
     op.create_table(
@@ -82,7 +94,6 @@ def upgrade():
         sa.Column('meta', sa.JSON(), nullable=True),
         sa.Column('occurred_at', sa.DateTime(), nullable=False, server_default=sa.text('now()')),
     )
-    # Note: If you want DESC on occurred_at, create an index manually via op.execute
     op.create_index('ix_message_events_lead_occurred', 'message_events', ['lead_id', 'occurred_at'], unique=False)
 
 
@@ -99,10 +110,7 @@ def downgrade():
     op.drop_index('ix_leads_org_created', table_name='leads')
     op.drop_table('leads')
 
-    # Remove password column from users
-    op.drop_column('users', 'password')
-
-    # Drop ENUM types
+    # Drop ENUM types if they exist
     for enum_name in [
         'message_event_type',
         'message_channel',
@@ -110,4 +118,4 @@ def downgrade():
         'consent_channel',
         'lead_status',
     ]:
-        sa.Enum(name=enum_name).drop(bind, checkfirst=True)
+        op.execute(f"DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_type WHERE typname = '{enum_name}') THEN DROP TYPE {enum_name}; END IF; END $$;")
