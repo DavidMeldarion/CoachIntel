@@ -9,6 +9,11 @@ from sqlalchemy.dialects.postgresql import JSON
 from cryptography.fernet import Fernet
 import asyncpg
 
+# New imports for CRM models
+from sqlalchemy import Enum as SAEnum, UniqueConstraint, Index, func
+from sqlalchemy.dialects.postgresql import UUID, ARRAY
+import uuid
+
 Base = declarative_base()
 
 # Generate this key once and store securely (e.g., in .env)
@@ -31,6 +36,9 @@ class User(Base):
     zoom_jwt = Column(String, nullable=True)
     phone = Column(String, nullable=True)
     address = Column(String, nullable=True)
+    
+    # Account password (bcrypt hash); may be null for OAuth-only accounts
+    password = Column(String, nullable=True)
     
     # Plan tier: 'free' | 'plus' | 'pro'
     plan = Column(String, nullable=True, default="free")
@@ -109,6 +117,134 @@ class Transcript(Base):
     # Relationship
     meeting = relationship("Meeting", back_populates="transcript")
     org = relationship("Organization")
+
+# -------------------------
+# Minimal CRM models
+# -------------------------
+
+class Lead(Base):
+    __tablename__ = "leads"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=True)
+    org = relationship("Organization")
+
+    email = Column(String, nullable=False)
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+
+    status = Column(SAEnum('waitlist', 'invited', 'converted', 'lost', name='lead_status'), nullable=False, default='waitlist')
+
+    source = Column(String, nullable=True)
+    utm_source = Column(String, nullable=True)
+    utm_medium = Column(String, nullable=True)
+    utm_campaign = Column(String, nullable=True)
+
+    tags = Column(ARRAY(String), nullable=True, default=list)
+    notes = Column(Text, nullable=True)
+
+    last_contacted_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    consents = relationship("Consent", back_populates="lead", cascade="all, delete-orphan")
+    events = relationship("MessageEvent", back_populates="lead", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint('org_id', 'email', name='uq_leads_org_email'),
+        Index('ix_leads_org_created', 'org_id', 'created_at'),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Lead id={self.id} email={self.email} status={self.status} org_id={self.org_id}>"
+
+    def to_dict(self) -> dict:
+        return {
+            'id': str(self.id),
+            'org_id': self.org_id,
+            'email': self.email,
+            'first_name': self.first_name,
+            'last_name': self.last_name,
+            'phone': self.phone,
+            'status': self.status,
+            'source': self.source,
+            'utm_source': self.utm_source,
+            'utm_medium': self.utm_medium,
+            'utm_campaign': self.utm_campaign,
+            'tags': list(self.tags or []),
+            'notes': self.notes,
+            'last_contacted_at': self.last_contacted_at.isoformat() if self.last_contacted_at else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+class Consent(Base):
+    __tablename__ = "consents"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=True)
+    org = relationship("Organization")
+
+    lead_id = Column(UUID(as_uuid=True), ForeignKey("leads.id", ondelete="CASCADE"), index=True, nullable=False)
+    lead = relationship("Lead", back_populates="consents")
+
+    channel = Column(SAEnum('email', 'sms', name='consent_channel'), nullable=False)
+    status = Column(SAEnum('opted_in', 'opted_out', 'unknown', name='consent_status'), nullable=False, default='unknown')
+
+    captured_at = Column(DateTime, nullable=False, server_default=func.now())
+    source = Column(String, nullable=True)
+
+    __table_args__ = (
+        Index('ix_consents_org_captured', 'org_id', 'captured_at'),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Consent id={self.id} lead_id={self.lead_id} channel={self.channel} status={self.status}>"
+
+    def to_dict(self) -> dict:
+        return {
+            'id': str(self.id),
+            'org_id': self.org_id,
+            'lead_id': str(self.lead_id),
+            'channel': self.channel,
+            'status': self.status,
+            'captured_at': self.captured_at.isoformat() if self.captured_at else None,
+            'source': self.source,
+        }
+
+class MessageEvent(Base):
+    __tablename__ = "message_events"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=True)
+    org = relationship("Organization")
+
+    lead_id = Column(UUID(as_uuid=True), ForeignKey("leads.id", ondelete="CASCADE"), index=True, nullable=False)
+    lead = relationship("Lead", back_populates="events")
+
+    channel = Column(SAEnum('email', 'sms', name='message_channel'), nullable=False)
+    type = Column(SAEnum('send', 'open', 'click', 'bounce', 'complaint', name='message_event_type'), nullable=False)
+
+    provider_id = Column(String, nullable=True)
+    meta = Column(JSON, nullable=True)
+
+    occurred_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
+
+    __table_args__ = (
+        # Note: DESC index sort order will be created in migration (raw SQL) for portability
+        Index('ix_message_events_lead_occurred', 'lead_id', 'occurred_at'),
+    )
+
+    def __repr__(self) -> str:
+        return f"<MessageEvent id={self.id} lead_id={self.lead_id} type={self.type} at={self.occurred_at}>"
+
+    def to_dict(self) -> dict:
+        return {
+            'id': str(self.id),
+            'org_id': self.org_id,
+            'lead_id': str(self.lead_id),
+            'channel': self.channel,
+            'type': self.type,
+            'provider_id': self.provider_id,
+            'meta': self.meta or {},
+            'occurred_at': self.occurred_at.isoformat() if self.occurred_at else None,
+        }
 
 # Async engine for FastAPI app
 ASYNC_DATABASE_URL = os.getenv("ASYNC_DATABASE_URL")

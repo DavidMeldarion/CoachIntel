@@ -71,12 +71,14 @@ export const authOptions: NextAuthOptions = {
         const base = getServerApiBase();
         const resp = await fetch(`${base}/user/${encodeURIComponent(user.email || '')}`);
         console.debug('[NextAuth][signIn] backend /user status', resp.status);
-        if (resp.ok) {
-          const data = await resp.json();
-          console.debug('[NextAuth][signIn] user plan', data?.plan);
+        // Only allow sign-in if the user already exists in the backend.
+        if (!resp.ok) {
+          console.warn('[NextAuth][signIn] rejecting login – user not found or backend error');
+          return false;
         }
       } catch (e) {
-        console.warn('[NextAuth][signIn] backend check failed (non-fatal)', (e as Error)?.message);
+        console.warn('[NextAuth][signIn] backend check failed – rejecting login', (e as Error)?.message);
+        return false;
       }
       return true; // never redirect from signIn; let session cookie be set
     },
