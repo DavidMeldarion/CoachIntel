@@ -752,6 +752,16 @@ async def update_user_profile(request: Request):
         raise HTTPException(status_code=401, detail="No authentication token or user email")
     try:
         data = await request.json()
+
+        # Prevent upgrading to paid plans until billing is implemented
+        requested_plan = data.get("plan")
+        if requested_plan in {"plus", "pro"}:
+            # Explicitly reject paid upgrades for now
+            raise HTTPException(status_code=402, detail="Payment required to upgrade plan")
+        elif requested_plan not in {None, "free"}:
+            # Sanitize any unexpected value
+            requested_plan = None
+
         user = await create_or_update_user(
             email=email,
             first_name=data.get("first_name"),
@@ -760,7 +770,7 @@ async def update_user_profile(request: Request):
             zoom_jwt=data.get("zoom_jwt"),
             phone=data.get("phone"),
             address=data.get("address"),
-            plan=data.get("plan"),
+            plan=requested_plan,
         )
         return {
             "email": user.email,
@@ -773,6 +783,9 @@ async def update_user_profile(request: Request):
             "address": user.address,
             "plan": getattr(user, 'plan', None)
         }
+    except HTTPException:
+        # Re-raise HTTPExceptions like 402 without wrapping
+        raise
     except Exception as e:
         print(f"[Backend] update_user_profile - Error: {e}")
         raise HTTPException(status_code=500, detail="Failed to update user profile")
