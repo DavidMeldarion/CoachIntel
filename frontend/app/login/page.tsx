@@ -25,21 +25,21 @@ function LoginPageContent() {
   const rawCallback = searchParams.get('callbackUrl');
   const callbackUrl = useMemo(() => (isSafeCallbackUrl(rawCallback) ? rawCallback! : '/dashboard'), [rawCallback]);
 
-  // Redirect authenticated users only if we have a safe callback target
+  // Redirect authenticated users to a safe target (default: /dashboard)
   useEffect(() => {
-    if (status === 'authenticated' && session && rawCallback && isSafeCallbackUrl(rawCallback)) {
+    if (status === 'authenticated' && session) {
       router.replace(callbackUrl);
     }
-  }, [status, session, router, rawCallback, callbackUrl]);
+  }, [status, session, router, callbackUrl]);
 
   // Show loading while checking authentication
   if (status === 'loading') {
     return <LoadingOverlay message="Checking authentication..." />;
   }
 
-  // If authenticated and no redirect needed, return null to avoid flicker
+  // If authenticated, show redirect overlay to avoid blank screen
   if (status === 'authenticated' && session) {
-    return null;
+    return <LoadingOverlay message="Redirecting..." />;
   }
 
   return (
