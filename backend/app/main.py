@@ -17,6 +17,7 @@ import logging
 # Add crypto utils for HMAC tokens
 import hmac, hashlib, base64
 from uuid import UUID as UUID_t
+from sqlalchemy import select, or_, func
 
 # Frontend URL configuration with both www and non-www variants
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
@@ -1158,6 +1159,17 @@ class LeadOut(BaseModel):
     class Config:
         from_attributes = True
 
+class LeadDetailOut(BaseModel):
+    id: str
+    email: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    status: str
+    tags: List[str] | None = None
+    created_at: Optional[datetime] = None
+    notes: Optional[str] = None
+    events: Optional[List[dict]] = None
+
 class LeadStatusUpdate(BaseModel):
     status: str
 
@@ -1167,6 +1179,9 @@ class LeadsPageOut(BaseModel):
     total: int
     limit: int
     offset: int
+
+class LeadNotesIn(BaseModel):
+    notes: Optional[str] = None
 
 @leads_router.post("/", response_model=LeadOut)
 async def upsert_lead(
@@ -1305,6 +1320,73 @@ async def list_leads(
             for l in rows
         ]
         return LeadsPageOut(items=items, total=total, limit=limit, offset=offset)
+
+@leads_router.get("/{lead_id}", response_model=LeadDetailOut)
+async def get_lead_detail(
+    lead_id: UUID_t,
+    user: User = Depends(verify_jwt_user),
+):
+    org_id = getattr(user, 'org_id', None)
+    async with AsyncSessionLocal() as session:
+        stmt = select(Lead).where(Lead.id == lead_id)
+        if org_id is not None:
+            stmt = stmt.where(Lead.org_id == org_id)
+        else:
+            stmt = stmt.where(Lead.org_id == None)  # noqa: E711
+        res = await session.execute(stmt)
+        lead = res.scalar_one_or_none()
+        if not lead:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        # fetch events separately, most recent first
+        evt_stmt = (
+            select(MessageEvent)
+            .where(MessageEvent.lead_id == lead.id)
+            .order_by(MessageEvent.occurred_at.desc())
+            .limit(100)
+        )
+        ev_res = await session.execute(evt_stmt)
+        evs = ev_res.scalars().all()
+        return LeadDetailOut(
+            id=str(lead.id),
+            email=lead.email,
+            first_name=lead.first_name,
+            last_name=lead.last_name,
+            status=lead.status,
+            tags=list(lead.tags or []),
+            created_at=lead.created_at,
+            notes=lead.notes,
+            events=[{"type": e.type, "occurred_at": e.occurred_at} for e in evs],
+        )
+
+@leads_router.patch("/{lead_id}", response_model=LeadOut)
+async def update_lead_notes(
+    lead_id: UUID_t,
+    body: LeadNotesIn,
+    user: User = Depends(verify_jwt_user),
+):
+    org_id = getattr(user, 'org_id', None)
+    async with AsyncSessionLocal() as session:
+        stmt = select(Lead).where(Lead.id == lead_id)
+        if org_id is not None:
+            stmt = stmt.where(Lead.org_id == org_id)
+        else:
+            stmt = stmt.where(Lead.org_id == None)  # noqa: E711
+        res = await session.execute(stmt)
+        lead = res.scalar_one_or_none()
+        if not lead:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        lead.notes = (body.notes or '').strip()
+        await session.commit()
+        await session.refresh(lead)
+        return LeadOut(
+            id=str(lead.id),
+            email=lead.email,
+            first_name=lead.first_name,
+            last_name=lead.last_name,
+            status=lead.status,
+            tags=list(lead.tags or []),
+            created_at=lead.created_at,
+        )
 
 @leads_router.post("/{lead_id}/status", response_model=LeadOut)
 async def update_lead_status(

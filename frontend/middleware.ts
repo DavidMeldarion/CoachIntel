@@ -7,6 +7,14 @@ export default withAuth(
     const plan = token?.plan ?? null;
     const { pathname, searchParams } = req.nextUrl;
 
+    // Owner-only admin gate
+    if (pathname.startsWith('/admin')) {
+      const ownerEmail = 'david@slypigdigitalmedia.com';
+      if (!token || token.email !== ownerEmail) {
+        return NextResponse.redirect(new URL('/dashboard', req.url));
+      }
+    }
+
     // Gate signup behind real access code validation
     if (pathname.startsWith('/signup')) {
       const access = searchParams.get('access');
@@ -74,5 +82,6 @@ export const config = {
     '/purchase/:path*',
     '/billing/:path*',
     '/signup/:path*',
+    '/admin/:path*',
   ],
 };
