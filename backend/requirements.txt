@@ -20,5 +20,6 @@ openai
 postmarker
 bcrypt
 passlib[bcrypt]
+pydantic[email]
 # optional SMS provider
 # twilio
