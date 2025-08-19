@@ -74,10 +74,12 @@ export const authOptions: NextAuthOptions = {
         // Only allow sign-in if the user already exists in the backend.
         if (!resp.ok) {
           console.warn('[NextAuth][signIn] rejecting login – user not found or backend error');
+          // Return false to surface AccessDenied and let NextAuth preserve callbackUrl
           return false;
         }
       } catch (e) {
         console.warn('[NextAuth][signIn] backend check failed – rejecting login', (e as Error)?.message);
+        // Return false to surface AccessDenied and let NextAuth preserve callbackUrl
         return false;
       }
       return true; // never redirect from signIn; let session cookie be set
