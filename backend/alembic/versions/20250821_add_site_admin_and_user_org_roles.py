@@ -7,7 +7,6 @@ Create Date: 2025-08-21 00:00:00
 """
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.engine.reflection import Inspector
 
 # revision identifiers, used by Alembic.
 revision = '20250821_add_site_admin_and_user_org_roles'
@@ -33,40 +32,52 @@ def upgrade():
         op.alter_column('users', 'site_admin', server_default=None)
         op.create_index('ix_users_site_admin', 'users', ['site_admin'])
 
-    # 2) Create org_role enum if not exists (Postgres)
-    # Use a try/except to handle idempotency for enum creation
-    enum_name = 'org_role'
-    try:
-        sa.Enum('admin', 'member', name=enum_name).create(bind, checkfirst=True)
-    except Exception:
-        pass
+    # 2) Ensure org_role enum exists (idempotent)
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_type t
+                JOIN pg_namespace n ON n.oid = t.typnamespace
+                WHERE t.typname = 'org_role' AND n.nspname = 'public'
+            ) THEN
+                CREATE TYPE public.org_role AS ENUM ('admin', 'member');
+            END IF;
+        END
+        $$ LANGUAGE plpgsql;
+        """
+    )
 
-    # 3) Create user_org_roles if not exists
+    # 3) Create user_org_roles if not exists (raw SQL to avoid Enum recreation issues)
     if not _table_exists(bind, 'user_org_roles'):
-        op.create_table(
-            'user_org_roles',
-            sa.Column('id', sa.Integer(), primary_key=True, index=True),
-            sa.Column('user_id', sa.Integer(), sa.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True),
-            sa.Column('org_id', sa.Integer(), sa.ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False, index=True),
-            sa.Column('role', sa.Enum('admin', 'member', name=enum_name), nullable=False, index=True),
-            sa.UniqueConstraint('user_id', 'org_id', 'role', name='uq_user_org_role'),
+        op.execute(
+            """
+            CREATE TABLE IF NOT EXISTS public.user_org_roles (
+                id SERIAL PRIMARY KEY,
+                user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                org_id integer NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+                role public.org_role NOT NULL,
+                CONSTRAINT uq_user_org_role UNIQUE (user_id, org_id, role)
+            );
+            """
         )
-        op.create_index('ix_user_org_roles_org_role', 'user_org_roles', ['org_id', 'role'])
+        op.execute("CREATE INDEX IF NOT EXISTS ix_user_org_roles_user_id ON public.user_org_roles (user_id);")
+        op.execute("CREATE INDEX IF NOT EXISTS ix_user_org_roles_org_id ON public.user_org_roles (org_id);")
+        op.execute("CREATE INDEX IF NOT EXISTS ix_user_org_roles_role ON public.user_org_roles (role);")
+        op.execute("CREATE INDEX IF NOT EXISTS ix_user_org_roles_org_role ON public.user_org_roles (org_id, role);")
 
 
 def downgrade():
     bind = op.get_bind()
     inspector = sa.inspect(bind)
 
-    # Drop user_org_roles
+    # Drop user_org_roles and its indexes
     if _table_exists(bind, 'user_org_roles'):
-        op.drop_index('ix_user_org_roles_org_role', table_name='user_org_roles')
-        op.drop_table('user_org_roles')
-    # Drop enum type (optional; safe to keep)
-    try:
-        sa.Enum(name='org_role').drop(bind, checkfirst=True)
-    except Exception:
-        pass
+        op.execute("DROP TABLE IF EXISTS public.user_org_roles CASCADE;")
+
+    # Leave enum type in place (safe to keep). Uncomment to drop if desired:
+    # op.execute("DROP TYPE IF EXISTS public.org_role;")
 
     # Remove users.site_admin
     user_cols = {c['name'] for c in inspector.get_columns('users')}
