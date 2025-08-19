@@ -7,10 +7,11 @@ export default withAuth(
     const plan = token?.plan ?? null;
     const { pathname, searchParams } = req.nextUrl;
 
-    // Owner-only admin gate
+    // Admin gate based on role flags populated on JWT
     if (pathname.startsWith('/admin')) {
-      const ownerEmail = 'david@slypigdigitalmedia.com';
-      if (!token || token.email !== ownerEmail) {
+      const siteAdmin = token?.siteAdmin === true;
+      const orgAdminIds = Array.isArray(token?.orgAdminIds) ? token.orgAdminIds : [];
+      if (!token || (!siteAdmin && orgAdminIds.length === 0)) {
         return NextResponse.redirect(new URL('/dashboard', req.url));
       }
     }
@@ -62,7 +63,7 @@ export default withAuth(
     callbacks: {
       // Allow public access to /signup (handled above), but require auth for protected routes
       authorized: ({ token, req }) => {
-        const pathname = req.nextUrl.pathname;
+        const pathname = (req as any).nextUrl.pathname as string;
         if (pathname.startsWith('/signup')) return true;
         return !!token;
       },

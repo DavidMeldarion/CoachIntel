@@ -7,6 +7,7 @@ import { listLeads, LeadListResponse, LeadStatus, updateLeadStatus, patchLeadFie
 import { StatusPill } from '../../../components/StatusPill'
 import { TagInput } from '../../../components/TagInput'
 import LeadDrawer from './LeadDrawer'
+import Link from 'next/link'
 
 function useQuerySync() {
   const search = useSearchParams()
@@ -61,7 +62,15 @@ export default function AdminLeadsPage() {
   const debounced = useRef<Record<string, ()=>void>>({})
 
   return (
-    <div className="p-6">
+    <div className="px-6">
+      {/* Admin tabs */}
+      <div className="mb-6 border-b border-gray-200">
+        <nav className="-mb-px flex gap-6" aria-label="Tabs">
+          <Link href="/admin/leads" className="border-b-2 border-blue-600 px-1 pb-2 text-sm font-medium text-blue-600">Leads</Link>
+          <Link href="/admin/org-admins" className="border-b-2 border-transparent px-1 pb-2 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300">Org Admins</Link>
+        </nav>
+      </div>
+
       <div className="flex flex-wrap items-end gap-2 mb-4">
         <div className="flex flex-col">
           <label className="text-xs text-gray-600">Search</label>

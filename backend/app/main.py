@@ -31,6 +31,7 @@ from app.models import (
     AsyncSessionLocal,
     get_user_by_email,
     create_or_update_user,
+    UserOrgRole,  # added
 )
 from app.integrations import get_fireflies_meeting_details, test_fireflies_api_key
 from app.worker import celery_app, sync_fireflies_meetings
@@ -224,6 +225,11 @@ class UserProfileOut(BaseModel):
     phone: str | None = None
     address: str | None = None
     plan: str | None = None
+    # Admin/roles
+    site_admin: bool = False
+    org_admin_ids: List[int] = []
+    # Current org context for the user
+    org_id: int | None = None
     
     class Config:
         from_attributes = True  # Pydantic v2 syntax (replaces orm_mode = True)
@@ -477,6 +483,19 @@ async def get_user(email: str):
     user = await get_user_by_email(email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    # Fetch org_admin_ids
+    org_admin_ids: List[int] = []
+    try:
+        async with AsyncSessionLocal() as session:
+            res = await session.execute(
+                select(UserOrgRole.org_id).where(
+                    UserOrgRole.user_id == user.id,
+                    UserOrgRole.role == 'admin'
+                )
+            )
+            org_admin_ids = [row[0] for row in res.fetchall()]
+    except Exception as e:
+        logger.warning(f"Failed to load org admin roles for {email}: {e}")
     
     return UserProfileOut(
         email=user.email,
@@ -487,7 +506,10 @@ async def get_user(email: str):
         zoom_jwt=user.zoom_jwt,
         phone=user.phone,
         address=user.address,
-        plan=getattr(user, 'plan', None)
+        plan=getattr(user, 'plan', None),
+        site_admin=bool(getattr(user, 'site_admin', False)),
+        org_admin_ids=org_admin_ids,
+        org_id=getattr(user, 'org_id', None),
     )
 
 @app.post("/user", response_model=UserProfileOut)
@@ -504,6 +526,19 @@ async def upsert_user(profile: UserProfileIn):
         phone=profile.phone,
         address=profile.address,
     )
+    # Fetch org_admin_ids (likely empty for new users)
+    org_admin_ids: List[int] = []
+    try:
+        async with AsyncSessionLocal() as session:
+            res = await session.execute(
+                select(UserOrgRole.org_id).where(
+                    UserOrgRole.user_id == user.id,
+                    UserOrgRole.role == 'admin'
+                )
+            )
+            org_admin_ids = [row[0] for row in res.fetchall()]
+    except Exception as e:
+        logger.warning(f"Failed to load org admin roles for {profile.email}: {e}")
     
     return UserProfileOut(
         email=user.email,
@@ -514,7 +549,10 @@ async def upsert_user(profile: UserProfileIn):
         zoom_jwt=user.zoom_jwt,
         phone=user.phone,
         address=user.address,
-        plan=getattr(user, 'plan', None)
+        plan=getattr(user, 'plan', None),
+        site_admin=bool(getattr(user, 'site_admin', False)),
+        org_admin_ids=org_admin_ids,
+        org_id=getattr(user, 'org_id', None),
     )
 
 @app.post("/login")

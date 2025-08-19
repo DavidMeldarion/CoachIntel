@@ -19,6 +19,7 @@ from typing import List, Optional, Dict, Literal
 from pydantic import BaseModel, EmailStr
 from uuid import UUID as UUID_t
 from datetime import datetime, date
+from sqlalchemy import Boolean  # added
 
 Base = declarative_base()
 
@@ -48,6 +49,9 @@ class User(Base):
     
     # Plan tier: 'free' | 'plus' | 'pro'
     plan = Column(String, nullable=True, default="free")
+
+    # Site-wide admin flag (for owner or elevated admins)
+    site_admin = Column(Boolean, nullable=False, default=False, index=True)
 
     # Organization
     org_id = Column(Integer, ForeignKey("organizations.id"), index=True, nullable=True)
@@ -251,6 +255,22 @@ class MessageEvent(Base):
             'meta': self.meta or {},
             'occurred_at': self.occurred_at.isoformat() if self.occurred_at else None,
         }
+
+# Organization role mapping (delegated admins per org)
+class UserOrgRole(Base):
+    __tablename__ = "user_org_roles"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    org_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), index=True, nullable=False)
+    role = Column(SAEnum('admin', 'member', name='org_role'), nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint('user_id', 'org_id', 'role', name='uq_user_org_role'),
+        Index('ix_user_org_roles_org_role', 'org_id', 'role'),
+    )
+
+    def __repr__(self) -> str:
+        return f"<UserOrgRole user_id={self.user_id} org_id={self.org_id} role={self.role}>"
 
 # -------------------------
 # API DTOs (moved from app/schemas.py)
