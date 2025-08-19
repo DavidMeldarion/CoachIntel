@@ -1,28 +1,73 @@
+from typing import Optional
+import os
+from app.utils.crypto import sign_hmac_token
+
+# Base URL for building unsubscribe links
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+BACKEND_URL = os.getenv("BACKEND_URL", os.getenv("API_URL", "http://localhost:8000"))
+
+
+def build_unsubscribe_link(lead_id: str) -> str:
+    token = sign_hmac_token(lead_id)
+    # Unsubscribe endpoint is served by backend
+    return f"{BACKEND_URL}/unsubscribe?lead_id={lead_id}&token={token}"
+
+
+def append_unsubscribe_footer(html: str, lead_id: Optional[str]) -> str:
+    """Append an industry-standard unsubscribe footer to HTML emails.
+    If lead_id is provided, includes one-click unsubscribe link.
+    """
+    footer = ""
+    if lead_id:
+        link = build_unsubscribe_link(lead_id)
+        footer = f"""
+        <hr style=\"border:none;border-top:1px solid #eee;margin:24px 0;\"/>
+        <p style=\"font-size:12px;color:#6b7280;\">
+          You are receiving this email because you signed up for updates from CoachIntel.
+          If you no longer wish to receive these emails, you can <a href=\"{link}\">unsubscribe</a> at any time.
+        </p>
+        """
+    else:
+        footer = """
+        <hr style=\"border:none;border-top:1px solid #eee;margin:24px 0;\"/>
+        <p style=\"font-size:12px;color:#6b7280;\">
+          You are receiving this email from CoachIntel. To stop receiving these emails, unsubscribe using the link provided in your account.
+        </p>
+        """
+
+    # Insert footer before closing body/html if present
+    if "</body>" in html:
+        return html.replace("</body>", footer + "</body>")
+    if "</html>" in html:
+        return html.replace("</html>", footer + "</html>")
+    return html + footer
+
+
 class EmailService:
     """
     Provider-agnostic email sender interface.
     Subclasses should implement the send method for specific email providers.
     """
 
-    def send(self, to_email: str, subject: str, body: str) -> None:
+    def send(self, to: str, subject: str, html: str, meta: dict | None = None) -> str | None:
         """
         Send an email message.
 
         Args:
-            to_email (str): Recipient's email address.
-            subject (str): Subject line of the email.
-            body (str): Plain text or HTML body of the email.
-
-        Raises:
-            NotImplementedError: This method must be implemented by subclasses.
+            to (str): Recipient email address.
+            subject (str): Subject line.
+            html (str): HTML body.
+            meta (dict | None): Optional metadata (e.g., lead_id, org_id, template, etc.).
+        Returns:
+            Optional[str]: Provider-specific message id if available.
         """
         raise NotImplementedError("EmailService.send() must be implemented by a provider-specific subclass.")
 
-def build_summary_email_html(summary: str, action_items: list[str], progress_notes: str) -> str:
+def build_summary_email_html(summary: str, action_items: list[str], progress_notes: str, lead_id: Optional[str] = None) -> str:
     """
     Build a styled HTML email body for the meeting summary email.
     """
-    return f"""
+    html = f"""
     <html>
     <head>
       <style>
@@ -45,16 +90,13 @@ def build_summary_email_html(summary: str, action_items: list[str], progress_not
         </ul>
         <h3>📈 Progress Notes</h3>
         <p>{progress_notes or 'No progress notes.'}</p>
-        <div class="footer">
-          <hr style="border:none;border-top:1px solid #eee;margin:24px 0;"/>
-          <div>Sent by CoachIntel.ai &mdash; AI-powered coaching platform</div>
-        </div>
       </div>
     </body>
     </html>
     """
+    return append_unsubscribe_footer(html, lead_id)
 
-def send_summary_email(to_email: str, summary: str, action_items: list[str], progress_notes: str) -> None:
+def send_summary_email(to_email: str, summary: str, action_items: list[str], progress_notes: str, lead_id: Optional[str] = None) -> None:
     """
     Send a summary email to the user with summary, action items, and progress notes.
 
@@ -67,5 +109,6 @@ def send_summary_email(to_email: str, summary: str, action_items: list[str], pro
     from app.services.factory import get_email_service  # Import locally to avoid circular import
     email_service = get_email_service()
     subject = "Your Meeting Summary"
-    html_body = build_summary_email_html(summary, action_items, progress_notes)
-    email_service.send(to_email, subject, html_body)
+    html_body = build_summary_email_html(summary, action_items, progress_notes, lead_id=lead_id)
+    # Meta can include contextual identifiers; leave None here
+    email_service.send(to_email, subject, html_body, meta=None)

@@ -1,24 +1,43 @@
+from __future__ import annotations
 import os
 import time
 import jwt
 import json
-from fastapi import FastAPI, HTTPException, UploadFile, File, Query, Request, Body, Depends
+from fastapi import APIRouter, HTTPException, Request, FastAPI, HTTPException, UploadFile, File, Query, Request, Body, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, validator, Field, ValidationError
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
 import httpx
 from urllib.parse import urlencode
 from datetime import datetime, timedelta
 from sqlalchemy.orm import selectinload
 import logging
-from celery.result import AsyncResult
+# Add crypto utils for HMAC tokens
+import hmac, hashlib, base64
+from uuid import UUID as UUID_t
+from sqlalchemy import select, or_, func
+# Import password hashing context
 from passlib.context import CryptContext
-from .integrations import get_fireflies_meeting_details, test_fireflies_api_key
-from .models import User, create_or_update_user, get_user_by_email, Meeting, Transcript, AsyncSessionLocal
-from sqlalchemy import select
-from app.worker import sync_fireflies_meetings, celery_app, REDIS_URL  # Import Celery task for Fireflies only
+# Added typing and external imports
+from typing import Optional, List, Dict
+from celery.result import AsyncResult
+from app.models import (
+    User,
+    Meeting,
+    Transcript,
+    Lead,
+    Consent,
+    MessageEvent,
+    AsyncSessionLocal,
+    get_user_by_email,
+    create_or_update_user,
+)
+from app.integrations import get_fireflies_meeting_details, test_fireflies_api_key
+from app.worker import celery_app, sync_fireflies_meetings
 from .config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_TOKEN_URL, GOOGLE_CALENDAR_EVENTS_URL
+
+# Import leads router
+from app.routers.leads import router as leads_router
 
 # Frontend URL configuration with both www and non-www variants
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
@@ -65,6 +84,40 @@ async def trust_proxy_headers(request: Request, call_next):
 
 # Password hashing setup
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# -------------------------
+# HMAC utils for unsubscribe links
+# -------------------------
+
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _b64url_decode(data: str) -> bytes:
+    padding = '=' * ((4 - len(data) % 4) % 4)
+    return base64.urlsafe_b64decode((data + padding).encode())
+
+
+def sign_hmac_token(payload: dict, secret: str, expires_in_seconds: int = 60 * 60 * 24 * 30) -> str:
+    body = json.dumps({**payload, "exp": int(time.time()) + expires_in_seconds}, separators=(",", ":")).encode()
+    sig = hmac.new(secret.encode(), body, hashlib.sha256).digest()
+    return f"{_b64url_encode(body)}.{_b64url_encode(sig)}"
+
+
+def verify_hmac_token(token: str, secret: str) -> dict:
+    try:
+        body_b64, sig_b64 = token.split(".")
+        body = _b64url_decode(body_b64)
+        sig = _b64url_decode(sig_b64)
+        expected = hmac.new(secret.encode(), body, hashlib.sha256).digest()
+        if not hmac.compare_digest(sig, expected):
+            raise ValueError("Invalid signature")
+        data = json.loads(body.decode())
+        if int(time.time()) > int(data.get("exp", 0)):
+            raise ValueError("Token expired")
+        return data
+    except Exception as e:
+        raise ValueError(f"Invalid token: {e}")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a plain password against its hash."""
@@ -175,6 +228,114 @@ class UserProfileOut(BaseModel):
     class Config:
         from_attributes = True  # Pydantic v2 syntax (replaces orm_mode = True)
 
+# -------------------------
+# CRM: Public lead capture (waitlist)
+# -------------------------
+class LeadPublicIn(BaseModel):
+    email: str
+    first_name: str | None = None
+    last_name: str | None = None
+    phone: str | None = None
+    source: str | None = None
+    utm_source: str | None = None
+    utm_medium: str | None = None
+    utm_campaign: str | None = None
+    consent_email_opt_in: bool | None = None
+
+    @validator("email")
+    def validate_email(cls, v):
+        import re
+        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(pattern, v):
+            raise ValueError("Invalid email format")
+        return v.lower()
+
+    @validator("phone")
+    def validate_phone(cls, v):
+        if v:
+            import re
+            pattern = r'^[\+]?[\d\s\-\(\)]{10,20}$'
+            if not re.match(pattern, v):
+                raise ValueError("Invalid phone number format")
+        return v
+
+class LeadOut(BaseModel):
+    id: str
+    email: str
+    first_name: str | None = None
+    last_name: str | None = None
+    phone: str | None = None
+    status: str
+    source: str | None = None
+    utm_source: str | None = None
+    utm_medium: str | None = None
+    utm_campaign: str | None = None
+    tags: list[str] | None = None
+    notes: str | None = None
+    last_contacted_at: datetime | None = None
+    created_at: datetime | None = None
+
+    class Config:
+        from_attributes = True
+
+@app.post("/crm/public/leads", response_model=LeadOut)
+async def create_public_lead(payload: LeadPublicIn):
+    """Public endpoint to capture waitlist leads without auth (org_id is null)."""
+    async with AsyncSessionLocal() as session:
+        # Try to find existing lead with same email and no org
+        result = await session.execute(
+            select(Lead).where(Lead.email == payload.email, Lead.org_id == None)  # noqa: E711
+        )
+        lead = result.scalar_one_or_none()
+        if not lead:
+            lead = Lead(
+                email=payload.email,
+                first_name=payload.first_name,
+                last_name=payload.last_name,
+                phone=payload.phone,
+                status='waitlist',
+                source=payload.source or 'waitlist-web',
+                utm_source=payload.utm_source,
+                utm_medium=payload.utm_medium,
+                utm_campaign=payload.utm_campaign,
+            )
+            session.add(lead)
+        else:
+            # Update basic fields
+            lead.first_name = payload.first_name or lead.first_name
+            lead.last_name = payload.last_name or lead.last_name
+            lead.phone = payload.phone or lead.phone
+            lead.source = payload.source or lead.source
+            lead.utm_source = payload.utm_source or lead.utm_source
+            lead.utm_medium = payload.utm_medium or lead.utm_medium
+            lead.utm_campaign = payload.utm_campaign or lead.utm_campaign
+
+        # Record consent if provided
+        if payload.consent_email_opt_in is not None:
+            consent_status = 'opted_in' if payload.consent_email_opt_in else 'opted_out'
+            consent = Consent(
+                lead=lead,
+                channel='email',
+                status=consent_status,
+                source=payload.source or 'waitlist-web',
+            )
+            session.add(consent)
+
+        await session.commit()
+        await session.refresh(lead)
+        # Return lead
+        data = lead.to_dict()
+        # Pydantic model expects list for tags
+        data['tags'] = data.get('tags') or []
+        return LeadOut(**data)
+
+# -------------------------
+# End CRM endpoints
+# -------------------------
+
+# Include leads router
+app.include_router(leads_router)
+
 # JWT/session verification dependency
 async def verify_jwt_user(request: Request):
     cookie_header = request.headers.get("cookie", "")
@@ -236,6 +397,37 @@ async def verify_jwt_user(request: Request):
 @app.get("/")
 def root():
     return {"message": "CoachIntel backend API"}
+
+# -------------------------
+# Unsubscribe endpoint using HMAC token
+# -------------------------
+UNSUBSCRIBE_SECRET = os.getenv("UNSUBSCRIBE_SECRET", SECRET_KEY)
+
+@app.get("/unsubscribe")
+async def unsubscribe(request: Request):
+    token = request.query_params.get("t")
+    if not token:
+        raise HTTPException(status_code=400, detail="Missing token")
+    try:
+        data = verify_hmac_token(token, UNSUBSCRIBE_SECRET)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid token: {e}")
+
+    email = data.get("email")
+    channel = data.get("channel", "email")
+    if not email:
+        raise HTTPException(status_code=400, detail="Invalid payload")
+
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(select(Lead).where(Lead.email == email))
+        lead = res.scalar_one_or_none()
+        if not lead:
+            # Render a friendly HTML even if not found
+            return HTMLResponse("<h3>You have been unsubscribed.</h3>")
+        # Record opt-out consent
+        session.add(Consent(lead_id=lead.id, channel=channel, status='opted_out', source='unsubscribe-link'))
+        await session.commit()
+    return HTMLResponse("<h3>You have been unsubscribed.</h3>")
 
 # Secure endpoints
 # @app.post("/upload-audio/")
@@ -406,7 +598,7 @@ async def signup(request: SignupRequest):
         if existing_user:
             return JSONResponse(
                 status_code=409,
-                content={"error": "User with this email already exists"}
+                content={"error": "User with this email exists"}
             )
         
         # Hash the password
@@ -974,7 +1166,7 @@ def require_plan(user: User, allowed: set[str]):
     if plan not in allowed:
         raise HTTPException(status_code=403, detail=f"Plan '{plan}' is not permitted for this action")
 
-from fastapi import status
+
 
 @app.post("/summarize-missing-transcripts", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_summarize_missing_transcripts(user: User = Depends(verify_jwt_user)):
@@ -1007,3 +1199,166 @@ async def transcribe(user: User = Depends(verify_jwt_user)):
     require_plan(user, {"pro"})
     # Not implemented yet; return 202 to indicate accepted
     return JSONResponse(status_code=202, content={"status": "accepted"})
+
+# -------------------------
+# Postmark webhook and event recorder
+# -------------------------
+
+async def record_event(lead: Lead, type: str, channel: str = 'email', provider_id: str | None = None, meta: dict | None = None):
+    async with AsyncSessionLocal() as session:
+        ev = MessageEvent(lead_id=lead.id, channel=channel, type=type, provider_id=provider_id, meta=meta or {})
+        session.add(ev)
+        await session.commit()
+
+@app.post("/webhooks/postmark")
+async def postmark_webhook(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    message_id = payload.get("MessageID") or payload.get("Message-Id")
+    email = (payload.get("Recipient") or payload.get("Email") or "").lower()
+    event_type = payload.get("RecordType") or payload.get("Type")
+
+    if not email or not event_type:
+        return JSONResponse(status_code=200, content={"ok": True})
+
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(select(Lead).where(Lead.email == email))
+        lead = res.scalar_one_or_none()
+        if not lead:
+            return JSONResponse(status_code=200, content={"ok": True})
+        # Map Postmark events
+        event_map = {
+            'Open': 'open',
+            'Click': 'click',
+            'Bounce': 'bounce',
+            'SpamComplaint': 'complaint',
+            'Delivery': 'send',
+            'Transient': 'bounce',
+            'Permanent': 'bounce',
+        }
+        mapped = event_map.get(event_type, None)
+        if mapped:
+            await record_event(lead, mapped, channel='email', provider_id=message_id, meta=payload)
+            # If bounce/complaint, auto opt-out
+            if mapped in {"bounce", "complaint"}:
+                session.add(Consent(lead_id=lead.id, channel='email', status='opted_out', source='postmark-webhook'))
+                await session.commit()
+
+    return JSONResponse(status_code=200, content={"ok": True})
+
+# -------------------------
+# CRM: Leads router
+# -------------------------
+# leads_router = APIRouter(prefix="/leads", tags=["leads"])  # moved to app.routers.leads
+
+# ALLOWED_LEAD_STATUS = {"waitlist", "invited", "converted", "lost"}
+
+# class LeadCreate(BaseModel):
+#     email: str
+#     first_name: Optional[str] = None
+#     last_name: Optional[str] = None
+#     phone: Optional[str] = None
+#     source: Optional[str] = None
+#     utm_source: Optional[str] = None
+#     utm_medium: Optional[str] = None
+#     utm_campaign: Optional[str] = None
+#     tags: Optional[List[str]] = None
+#     consent_email: Optional[bool] = None
+#     consent_sms: Optional[bool] = None
+
+#     @validator("email")
+#     def _valid_email(cls, v):
+#         import re
+#         if not re.match(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$', v or ""):
+#             raise ValueError("Invalid email format")
+#         return v.lower()
+
+#     @validator("phone")
+#     def _valid_phone(cls, v):
+#         if v:
+#             import re
+#             if not re.match(r'^[\+]?[\d\s\-\(\)]{10,20}$', v):
+#                 raise ValueError("Invalid phone number format")
+#         return v
+
+# class LeadOut(BaseModel):
+#     id: str
+#     email: str
+#     first_name: Optional[str] = None
+#     last_name: Optional[str] = None
+#     status: str
+#     tags: List[str] | None = None
+#     created_at: Optional[datetime] = None
+
+#     class Config:
+#         from_attributes = True
+
+# class LeadDetailOut(BaseModel):
+#     id: str
+#     email: str
+#     first_name: Optional[str] = None
+#     last_name: Optional[str] = None
+#     status: str
+#     tags: List[str] | None = None
+#     created_at: Optional[datetime] = None
+#     notes: Optional[str] = None
+#     events: Optional[List[dict]] = None
+
+# class LeadStatusUpdate(BaseModel):
+#     status: str
+
+# # Paged response for listing leads
+# class LeadsPageOut(BaseModel):
+#     items: List[LeadOut]
+#     total: int
+#     limit: int
+#     offset: int
+
+# class LeadNotesIn(BaseModel):
+#     notes: Optional[str] = None
+
+# @leads_router.post("/", response_model=LeadOut)
+# async def upsert_lead(
+#     payload: LeadCreate,
+#     user: User = Depends(verify_jwt_user),
+# ):
+#     ...
+
+# @leads_router.get("/", response_model=LeadsPageOut)
+# async def list_leads(
+#     q: Optional[str] = Query(default=None, description="Search email or name"),
+#     status: Optional[str] = Query(default=None),
+#     limit: int = Query(default=50, ge=1, le=200),
+#     offset: int = Query(default=0, ge=0),
+#     user: User = Depends(verify_jwt_user),
+# ):
+#     ...
+
+# @leads_router.get("/{lead_id}", response_model=LeadDetailOut)
+# async def get_lead_detail(
+#     lead_id: UUID_t,
+#     user: User = Depends(verify_jwt_user),
+# ):
+#     ...
+
+# @leads_router.patch("/{lead_id}", response_model=LeadOut)
+# async def update_lead_notes(
+#     lead_id: UUID_t,
+#     body: LeadNotesIn,
+#     user: User = Depends(verify_jwt_user),
+# ):
+#     ...
+
+# @leads_router.post("/{lead_id}/status", response_model=LeadOut)
+# async def update_lead_status(
+#     lead_id: UUID_t,
+#     body: LeadStatusUpdate,
+#     user: User = Depends(verify_jwt_user),
+# ):
+#     ...
+
+# async def record_event(...):
+#     ...

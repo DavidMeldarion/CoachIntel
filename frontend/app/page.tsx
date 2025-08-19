@@ -19,10 +19,10 @@ export default function Home() {
             </p>
             <div className="mt-10 flex items-center justify-center gap-x-6">
               <Link
-                href="/signup"
+                href="/waitlist"
                 className="rounded-md bg-blue-600 px-6 py-3 text-lg font-semibold text-white shadow-sm hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
               >
-                Request Early Access
+                Join Waitlist
               </Link>
               <Link
                 href="#features"
@@ -338,10 +338,10 @@ export default function Home() {
                     <span className="line-through">Regular price: $99/month</span>
                   </p>
                   <Link
-                    href="/signup"
+                    href="/waitlist"
                     className="mt-10 block w-full rounded-md bg-blue-600 px-3 py-2 text-center text-sm font-semibold text-white shadow-sm hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
                   >
-                    Start Your Free Trial
+                    Join Waitlist
                   </Link>
                   <p className="mt-6 text-xs leading-5 text-gray-600">
                     14-day free trial • No credit card required
@@ -430,14 +430,14 @@ export default function Home() {
             </h2>
             <p className="mx-auto mt-6 max-w-xl text-lg leading-8 text-blue-200">
               Join hundreds of personal trainers who are already saving hours every week with CoachIntel. 
-              Start your free trial today - no credit card required.
+              Be first to get access when we open.
             </p>
             <div className="mt-10 flex items-center justify-center gap-x-6">
               <Link
-                href="/signup"
+                href="/waitlist"
                 className="rounded-md bg-white px-6 py-3 text-lg font-semibold text-blue-600 shadow-sm hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
               >
-                Start Free Trial
+                Join Waitlist
               </Link>
               <Link
                 href="/login"

@@ -2,10 +2,41 @@ import { withAuth } from 'next-auth/middleware';
 import { NextResponse } from 'next/server';
 
 export default withAuth(
-  function middleware(req) {
+  async function middleware(req) {
     const token = (req as any).nextauth?.token as any;
     const plan = token?.plan ?? null;
-    const { pathname } = req.nextUrl;
+    const { pathname, searchParams } = req.nextUrl;
+
+    // Owner-only admin gate
+    if (pathname.startsWith('/admin')) {
+      const ownerEmail = 'david@slypigdigitalmedia.com';
+      if (!token || token.email !== ownerEmail) {
+        return NextResponse.redirect(new URL('/dashboard', req.url));
+      }
+    }
+
+    // Gate signup behind real access code validation
+    if (pathname.startsWith('/signup')) {
+      const access = searchParams.get('access');
+      if (!access) {
+        return NextResponse.redirect(new URL('/waitlist', req.url));
+      }
+      try {
+        const validateUrl = new URL('/api/access/validate', req.url);
+        validateUrl.searchParams.set('access', access);
+        const r = await fetch(validateUrl.toString(), { headers: { 'x-mw': '1' } });
+        if (!r.ok) {
+          return NextResponse.redirect(new URL('/waitlist', req.url));
+        }
+        const data = await r.json().catch(() => ({}));
+        if (!data?.ok) {
+          return NextResponse.redirect(new URL('/waitlist', req.url));
+        }
+      } catch {
+        return NextResponse.redirect(new URL('/waitlist', req.url));
+      }
+      return NextResponse.next();
+    }
 
     const isPurchase = pathname.startsWith('/purchase');
     const isUpload = pathname.startsWith('/upload');
@@ -29,8 +60,12 @@ export default withAuth(
   },
   {
     callbacks: {
-      // Require a valid token to access matched routes
-      authorized: ({ token }) => !!token,
+      // Allow public access to /signup (handled above), but require auth for protected routes
+      authorized: ({ token, req }) => {
+        const pathname = req.nextUrl.pathname;
+        if (pathname.startsWith('/signup')) return true;
+        return !!token;
+      },
     },
     pages: {
       signIn: '/login',
@@ -46,5 +81,7 @@ export const config = {
     '/upload/:path*',
     '/purchase/:path*',
     '/billing/:path*',
+    '/signup/:path*',
+    '/admin/:path*',
   ],
 };

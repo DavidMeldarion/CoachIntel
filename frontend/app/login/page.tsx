@@ -50,12 +50,15 @@ function LoginPageContent() {
         {error && (
           <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4 max-w-md">
             <p className="text-sm">
-              <strong>Authentication Error:</strong> {
+              <strong>Authentication Error:</strong>{' '}
+              {error === 'AccessDenied' ? (
+                <>You don’t have an account yet. Request access by joining the waitlist <Link href="/waitlist" className="underline font-medium text-blue-700">here</Link>.</>
+              ) : (
                 error === 'CredentialsSignin' ? 'Invalid credentials. Please try again.' :
                 error === 'OAuthSignin' ? 'Error connecting to Google. Please try again.' :
                 error === 'OAuthCallback' ? 'Error during authentication. Please try again.' :
                 error
-              }
+              )}
             </p>
           </div>
         )}
