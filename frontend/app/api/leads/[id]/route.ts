@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerApiBase } from '../../../../lib/serverApi';
 import { getToken } from 'next-auth/jwt';
 
-export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(request: NextRequest, context: any) {
   const API_BASE = getServerApiBase();
-  const { id } = params;
+  const id = context?.params?.id as string;
   const backendUrl = `${API_BASE}/leads/${encodeURIComponent(id)}`;
 
   const token = await getToken({ req: request as any, secret: process.env.NEXTAUTH_SECRET });
@@ -16,9 +16,9 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   return new NextResponse(body, { status: resp.status, headers: { 'content-type': resp.headers.get('content-type') || 'application/json' } });
 }
 
-export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(request: NextRequest, context: any) {
   const API_BASE = getServerApiBase();
-  const { id } = params;
+  const id = context?.params?.id as string;
   const backendUrl = `${API_BASE}/leads/${encodeURIComponent(id)}`;
 
   const token = await getToken({ req: request as any, secret: process.env.NEXTAUTH_SECRET });
