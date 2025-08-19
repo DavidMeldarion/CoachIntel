@@ -1,8 +1,9 @@
 export const dynamic = 'force-dynamic'
 
-export async function GET(_: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, context: any) {
   try {
-    const res = await fetch(`/api/leads/${encodeURIComponent(params.id)}`, { cache: 'no-store' })
+    const id = context?.params?.id as string
+    const res = await fetch(`/api/leads/${encodeURIComponent(id)}`, { cache: 'no-store' })
     const body = await res.text()
     return new Response(body, {
       status: res.status,
