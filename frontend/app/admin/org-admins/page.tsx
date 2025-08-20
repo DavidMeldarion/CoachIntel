@@ -29,6 +29,7 @@ export default function OrgAdminsPage() {
   );
 
   const [email, setEmail] = useState('');
+  // Invite creation moved to Leads page
 
   async function addAdmin() {
     if (!effectiveOrgId || !email) return;
@@ -47,6 +48,8 @@ export default function OrgAdminsPage() {
     await fetch(`/api/orgs/${effectiveOrgId}/admins/${id}`, { method: 'DELETE', credentials: 'include' });
     mutate();
   }
+
+  // createInvite removed
 
   return (
     <div className="px-6">
@@ -76,8 +79,10 @@ export default function OrgAdminsPage() {
           placeholder="admin@email.com"
           className="border rounded px-3 py-2 w-80"
         />
-        <button onClick={addAdmin} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Add Admin</button>
+  <button onClick={addAdmin} className="px-4 py-2 ci-bg-primary ci-text-white rounded hover:ci-bg-primary">Add Admin</button>
       </div>
+
+  {/* Invite creation moved to Leads page */}
 
       <div className="bg-white shadow rounded overflow-hidden">
         <table className="min-w-full">

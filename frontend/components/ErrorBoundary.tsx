@@ -72,7 +72,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
               
               <button
                 onClick={() => window.location.reload()}
-                className="bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+                className="ci-bg-primary-500 hover:ci-bg-primary ci-text-white font-medium py-2 px-4 rounded-lg transition-colors"
               >
                 Refresh Page
               </button>
@@ -116,7 +116,7 @@ export function AuthErrorBoundary({ children }: { children: ReactNode }) {
             </p>
             <button
               onClick={() => window.location.href = '/login'}
-              className="bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+              className="ci-bg-primary-500 hover:ci-bg-primary ci-text-white font-medium py-2 px-4 rounded-lg transition-colors"
             >
               Go to Login
             </button>

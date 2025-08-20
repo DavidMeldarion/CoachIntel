@@ -120,6 +120,12 @@ def verify_hmac_token(token: str, secret: str) -> dict:
     except Exception as e:
         raise ValueError(f"Invalid token: {e}")
 
+def sign_invite_token(email: str, secret: str, expires_in_seconds: int = 60 * 60 * 24 * 14) -> str:
+    """Create a unique HMAC-signed invite token bound to the email with expiry and nonce."""
+    nonce = base64.urlsafe_b64encode(os.urandom(16)).decode().rstrip('=')
+    payload = {"email": email.lower(), "nonce": nonce}
+    return sign_hmac_token(payload, secret, expires_in_seconds)
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a plain password against its hash."""
     return pwd_context.verify(plain_password, hashed_password)
@@ -247,6 +253,8 @@ class LeadPublicIn(BaseModel):
     utm_medium: str | None = None
     utm_campaign: str | None = None
     consent_email_opt_in: bool | None = None
+    consent_sms_opt_in: bool | None = None
+    consent_version: str | None = None
 
     @validator("email")
     def validate_email(cls, v):
@@ -285,8 +293,12 @@ class LeadOut(BaseModel):
         from_attributes = True
 
 @app.post("/crm/public/leads", response_model=LeadOut)
-async def create_public_lead(payload: LeadPublicIn):
+async def create_public_lead(payload: LeadPublicIn, request: Request):
     """Public endpoint to capture waitlist leads without auth (org_id is null)."""
+    try:
+        logger.info("[PublicLead] inbound payload: %s", json.dumps(getattr(payload, 'model_dump', lambda: payload.__dict__)(), default=str))
+    except Exception as _e:
+        logger.info("[PublicLead] inbound payload (raw): %s", str(payload))
     async with AsyncSessionLocal() as session:
         # Try to find existing lead with same email and no org
         result = await session.execute(
@@ -317,6 +329,13 @@ async def create_public_lead(payload: LeadPublicIn):
             lead.utm_campaign = payload.utm_campaign or lead.utm_campaign
 
         # Record consent if provided
+        # Consent meta for audit (timestamp is in Consent.captured_at)
+        consent_meta = {
+            'ip': request.client.host if request.client else None,
+            'user_agent': request.headers.get('user-agent'),
+            'consent_version': payload.consent_version,
+        }
+
         if payload.consent_email_opt_in is not None:
             consent_status = 'opted_in' if payload.consent_email_opt_in else 'opted_out'
             consent = Consent(
@@ -324,11 +343,35 @@ async def create_public_lead(payload: LeadPublicIn):
                 channel='email',
                 status=consent_status,
                 source=payload.source or 'waitlist-web',
+                meta=consent_meta,
             )
             session.add(consent)
+            try:
+                logger.info("[PublicLead] email consent recorded: %s", consent_status)
+            except Exception:
+                pass
+
+        if payload.consent_sms_opt_in is not None:
+            sms_status = 'opted_in' if payload.consent_sms_opt_in else 'opted_out'
+            sms_consent = Consent(
+                lead=lead,
+                channel='sms',
+                status=sms_status,
+                source=payload.source or 'waitlist-web',
+                meta=consent_meta,
+            )
+            session.add(sms_consent)
+            try:
+                logger.info("[PublicLead] sms consent recorded: %s", sms_status)
+            except Exception:
+                pass
 
         await session.commit()
         await session.refresh(lead)
+        try:
+            logger.info("[PublicLead] persisted lead id=%s email=%s status=%s", str(lead.id), lead.email, lead.status)
+        except Exception:
+            pass
         # Return lead
         data = lead.to_dict()
         # Pydantic model expects list for tags
@@ -397,6 +440,16 @@ async def verify_jwt_user(request: Request):
         except jwt.InvalidTokenError:
             raise HTTPException(status_code=401, detail="Invalid token")
     
+    # Dev-friendly fallback: allow trusted header-based auth in non-production
+    if not os.getenv("RAILWAY_ENVIRONMENT"):
+        email_header = request.headers.get("x-user-email", "")
+        auth_header = request.headers.get("authorization", "")
+        email = email_header or (auth_header.split("Bearer ")[1] if auth_header.startswith("Bearer ") else None)
+        if email:
+            user = await get_user_by_email(email)
+            if user:
+                print(f"[Backend] verify_jwt_user - Fallback header auth for {user.email}")
+                return user
     print("[Backend] verify_jwt_user - No token found, raising 401")
     raise HTTPException(status_code=401, detail="Not authenticated")
 
@@ -408,6 +461,7 @@ def root():
 # Unsubscribe endpoint using HMAC token
 # -------------------------
 UNSUBSCRIBE_SECRET = os.getenv("UNSUBSCRIBE_SECRET", SECRET_KEY)
+INVITE_SECRET = os.getenv("INVITE_SECRET", SECRET_KEY)
 
 @app.get("/unsubscribe")
 async def unsubscribe(request: Request):
@@ -434,6 +488,100 @@ async def unsubscribe(request: Request):
         session.add(Consent(lead_id=lead.id, channel=channel, status='opted_out', source='unsubscribe-link'))
         await session.commit()
     return HTMLResponse("<h3>You have been unsubscribed.</h3>")
+
+# -------------------------
+# Invite links (create/validate/redeem)
+# -------------------------
+
+class InviteCreateIn(BaseModel):
+    email: str
+    expires_in_days: int | None = 14
+
+    @validator("email")
+    def _v_email(cls, v):
+        import re
+        if not re.match(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$', v or ""):
+            raise ValueError("Invalid email")
+        return v.lower()
+
+class InviteOut(BaseModel):
+    email: str
+    token: str
+    invite_url: str
+    expires_at: int
+
+class InviteRedeemIn(BaseModel):
+    token: str
+
+class InviteValidateOut(BaseModel):
+    ok: bool
+    email: str | None = None
+    error: str | None = None
+
+def _require_admin(user: User):
+    # Simple guard: site_admin can create invites. Extend as needed.
+    if not bool(getattr(user, 'site_admin', False)):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+@app.post("/invites", response_model=InviteOut)
+async def create_invite(body: InviteCreateIn, user: User = Depends(verify_jwt_user)):
+    _require_admin(user)
+    try:
+        # Ensure the email exists as a lead (gatekeeping: waitlist vetted)
+        async with AsyncSessionLocal() as session:
+            res = await session.execute(select(Lead).where(Lead.email == body.email))
+            lead = res.scalar_one_or_none()
+            if not lead:
+                raise HTTPException(status_code=400, detail="Lead not found for this email")
+            # Optionally flip status to invited
+            try:
+                if getattr(lead, 'status', None) != 'invited':
+                    lead.status = 'invited'
+                    lead.last_contacted_at = datetime.utcnow()
+                    session.add(lead)
+                    await session.commit()
+            except Exception:
+                # Non-fatal; continue
+                pass
+        days = body.expires_in_days or 14
+        seconds = int(days) * 24 * 60 * 60
+        token = sign_invite_token(body.email, INVITE_SECRET, seconds)
+        # Decode token body to extract exp using helper that handles padding
+        try:
+            body_b64 = token.split('.')[0]
+            exp = int(json.loads(_b64url_decode(body_b64).decode()).get("exp", 0))
+        except Exception:
+            # Fallback if decoding fails: compute from now + seconds
+            exp = int(time.time()) + seconds
+        invite_url = f"{FRONTEND_URL.rstrip('/')}/signup?invite={token}"
+        return InviteOut(email=body.email, token=token, invite_url=invite_url, expires_at=exp)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create invite: {e}")
+
+@app.get("/invites/validate", response_model=InviteValidateOut)
+async def validate_invite(t: str = Query(..., alias="token")):
+    try:
+        data = verify_hmac_token(t, INVITE_SECRET)
+        return InviteValidateOut(ok=True, email=data.get("email"))
+    except Exception as e:
+        return InviteValidateOut(ok=False, error=str(e))
+
+@app.post("/invites/redeem")
+async def redeem_invite(body: InviteRedeemIn):
+    try:
+        data = verify_hmac_token(body.token, INVITE_SECRET)
+        email = (data.get("email") or "").lower()
+        if not email:
+            raise HTTPException(status_code=400, detail="Invalid invite payload")
+        # Create the user shell if not exists; do not set password here, OAuth will verify identity.
+        user = await get_user_by_email(email)
+        if not user:
+            user = await create_or_update_user(email=email, first_name="", last_name="")
+        return {"ok": True, "email": email}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid invite: {e}")
 
 # Secure endpoints
 # @app.post("/upload-audio/")
@@ -1286,120 +1434,6 @@ async def postmark_webhook(request: Request):
                 await session.commit()
 
     return JSONResponse(status_code=200, content={"ok": True})
-
-# -------------------------
-# CRM: Leads router
-# -------------------------
-# leads_router = APIRouter(prefix="/leads", tags=["leads"])  # moved to app.routers.leads
-
-# ALLOWED_LEAD_STATUS = {"waitlist", "invited", "converted", "lost"}
-
-# class LeadCreate(BaseModel):
-#     email: str
-#     first_name: Optional[str] = None
-#     last_name: Optional[str] = None
-#     phone: Optional[str] = None
-#     source: Optional[str] = None
-#     utm_source: Optional[str] = None
-#     utm_medium: Optional[str] = None
-#     utm_campaign: Optional[str] = None
-#     tags: Optional[List[str]] = None
-#     consent_email: Optional[bool] = None
-#     consent_sms: Optional[bool] = None
-
-#     @validator("email")
-#     def _valid_email(cls, v):
-#         import re
-#         if not re.match(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$', v or ""):
-#             raise ValueError("Invalid email format")
-#         return v.lower()
-
-#     @validator("phone")
-#     def _valid_phone(cls, v):
-#         if v:
-#             import re
-#             if not re.match(r'^[\+]?[\d\s\-\(\)]{10,20}$', v):
-#                 raise ValueError("Invalid phone number format")
-#         return v
-
-# class LeadOut(BaseModel):
-#     id: str
-#     email: str
-#     first_name: Optional[str] = None
-#     last_name: Optional[str] = None
-#     status: str
-#     tags: List[str] | None = None
-#     created_at: Optional[datetime] = None
-
-#     class Config:
-#         from_attributes = True
-
-# class LeadDetailOut(BaseModel):
-#     id: str
-#     email: str
-#     first_name: Optional[str] = None
-#     last_name: Optional[str] = None
-#     status: str
-#     tags: List[str] | None = None
-#     created_at: Optional[datetime] = None
-#     notes: Optional[str] = None
-#     events: Optional[List[dict]] = None
-
-# class LeadStatusUpdate(BaseModel):
-#     status: str
-
-# # Paged response for listing leads
-# class LeadsPageOut(BaseModel):
-#     items: List[LeadOut]
-#     total: int
-#     limit: int
-#     offset: int
-
-# class LeadNotesIn(BaseModel):
-#     notes: Optional[str] = None
-
-# @leads_router.post("/", response_model=LeadOut)
-# async def upsert_lead(
-#     payload: LeadCreate,
-#     user: User = Depends(verify_jwt_user),
-# ):
-#     ...
-
-# @leads_router.get("/", response_model=LeadsPageOut)
-# async def list_leads(
-#     q: Optional[str] = Query(default=None, description="Search email or name"),
-#     status: Optional[str] = Query(default=None),
-#     limit: int = Query(default=50, ge=1, le=200),
-#     offset: int = Query(default=0, ge=0),
-#     user: User = Depends(verify_jwt_user),
-# ):
-#     ...
-
-# @leads_router.get("/{lead_id}", response_model=LeadDetailOut)
-# async def get_lead_detail(
-#     lead_id: UUID_t,
-#     user: User = Depends(verify_jwt_user),
-# ):
-#     ...
-
-# @leads_router.patch("/{lead_id}", response_model=LeadOut)
-# async def update_lead_notes(
-#     lead_id: UUID_t,
-#     body: LeadNotesIn,
-#     user: User = Depends(verify_jwt_user),
-# ):
-#     ...
-
-# @leads_router.post("/{lead_id}/status", response_model=LeadOut)
-# async def update_lead_status(
-#     lead_id: UUID_t,
-#     body: LeadStatusUpdate,
-#     user: User = Depends(verify_jwt_user),
-# ):
-#     ...
-
-# async def record_event(...):
-#     ...
 
 # -------------------------
 # Org Admin management (list/add/remove)

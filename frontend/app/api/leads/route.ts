@@ -25,6 +25,9 @@ export async function GET(request: NextRequest) {
   const token = await getToken({ req: request as any, secret: process.env.NEXTAUTH_SECRET });
   const headers: Record<string, string> = {};
   if ((token as any)?.email) headers['x-user-email'] = (token as any).email as string;
+  // Forward NextAuth session cookies so backend can verify
+  const cookie = request.headers.get('cookie');
+  if (cookie) headers['cookie'] = cookie;
 
   const resp = await fetch(backend.toString(), {
     headers,

@@ -91,7 +91,7 @@ export default function Navbar() {
             onClick={() => setDropdownOpen(!dropdownOpen)}
             className="flex items-center gap-2 px-4 py-2 text-gray-700 hover:text-blue-700 font-medium transition"
           >
-            <div className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center text-sm font-semibold">
+            <div className="w-8 h-8 ci-bg-primary ci-text-white rounded-full flex items-center justify-center text-sm font-semibold">
               {displayName.charAt(0).toUpperCase()}
             </div>
             <span>{displayName}</span>
@@ -148,7 +148,7 @@ export default function Navbar() {
           )}
         </div>
       ) : (
-        <Link href="/login" className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-semibold transition">Login</Link>
+  <Link href="/login" className="px-4 py-2 ci-bg-primary ci-text-white rounded hover:ci-bg-primary font-semibold transition">Login</Link>
       )}
     </nav>
   );

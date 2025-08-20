@@ -8,6 +8,7 @@ import { StatusPill } from '../../../components/StatusPill'
 import { TagInput } from '../../../components/TagInput'
 import LeadDrawer from './LeadDrawer'
 import Link from 'next/link'
+import { useSession } from 'next-auth/react'
 
 function useQuerySync() {
   const search = useSearchParams()
@@ -24,17 +25,18 @@ function useQuerySync() {
 }
 
 export default function AdminLeadsPage() {
+  const { data: session, status } = useSession();
   const { search, set } = useQuerySync()
   const q = search.get('q') || ''
-  const status = search.get('status') || ''
+  const statusFilter = search.get('status') || ''
   const tag = search.get('tag') || ''
   const date_from = search.get('date_from') || ''
   const date_to = search.get('date_to') || ''
   const limit = Number(search.get('limit') || '50')
   const offset = Number(search.get('offset') || '0')
 
-  const { data, isLoading, mutate } = useSWR<LeadListResponse>(['leads', q, status, tag, date_from, date_to, limit, offset],
-    () => listLeads({ q, status: status || undefined, tag: tag || undefined, dateFrom: date_from || undefined, dateTo: date_to || undefined, limit, offset }),
+  const { data, isLoading, mutate } = useSWR<LeadListResponse>(['leads', q, statusFilter, tag, date_from, date_to, limit, offset],
+    () => listLeads({ q, status: statusFilter || undefined, tag: tag || undefined, dateFrom: date_from || undefined, dateTo: date_to || undefined, limit, offset }),
     { keepPreviousData: true }
   )
 
@@ -61,6 +63,47 @@ export default function AdminLeadsPage() {
 
   const debounced = useRef<Record<string, ()=>void>>({})
 
+  async function inviteLead(email: string, id: string) {
+    try {
+      const resp = await fetch('/api/invites', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email }),
+      })
+      if (!resp.ok) throw new Error('Failed to create invite');
+      const data = await resp.json();
+      const url = data?.invite_url as string | undefined;
+      if (url) {
+        try { await navigator.clipboard.writeText(url) } catch {}
+        // Optimistically mark invited
+        await updateLeadStatus(id, 'invited')
+        mutate(prev=> prev ? { ...prev, items: prev.items.map(i => i.id === id ? { ...i, status: 'invited' } : i) } : prev, false)
+        alert('Invite link copied to clipboard');
+      } else {
+        alert('Invite created but missing URL');
+      }
+    } catch (e: any) {
+      alert(e?.message || 'Failed to create invite');
+    }
+  }
+
+  // Guard: Only site admins may view this page
+  if (status === 'loading') {
+    return <div className="p-6 text-gray-600">Loading…</div>
+  }
+  if (!(session as any)?.siteAdmin) {
+    return (
+      <div className="p-6">
+        <div className="max-w-xl mx-auto bg-white border rounded p-6 text-center">
+          <h2 className="text-lg font-semibold text-gray-800 mb-2">Access restricted</h2>
+          <p className="text-gray-600 mb-4">This page is for site administrators to manage public leads.</p>
+          <Link href="/dashboard" className="text-blue-600 hover:underline">Go to your dashboard</Link>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="px-6">
       {/* Admin tabs */}
@@ -78,7 +121,7 @@ export default function AdminLeadsPage() {
         </div>
         <div className="flex flex-col">
           <label className="text-xs text-gray-600">Status</label>
-          <select className="border rounded px-3 py-2" value={status} onChange={(e)=>set({ status: e.target.value || undefined, offset: '0' })}>
+          <select className="border rounded px-3 py-2" value={statusFilter} onChange={(e)=>set({ status: e.target.value || undefined, offset: '0' })}>
             <option value="">All</option>
             <option value="waitlist">waitlist</option>
             <option value="invited">invited</option>
@@ -140,7 +183,10 @@ export default function AdminLeadsPage() {
                 <td className="px-3 py-2">
                   <TagInput value={l.tags||[]} onChange={(tags)=>{ onTagsChange(l.id, tags); mutate(prev=> prev ? { ...prev, items: prev.items.map(i=> i.id===l.id ? { ...i, tags } : i) } : prev, false) }} />
                 </td>
-                <td className="px-3 py-2 text-right"><LeadDrawerTrigger id={l.id} /></td>
+                <td className="px-3 py-2 text-right flex items-center gap-3 justify-end">
+                  <button onClick={()=>inviteLead(l.email, l.id)} className="text-gray-700 hover:underline text-xs">Invite</button>
+                  <LeadDrawerTrigger id={l.id} />
+                </td>
               </tr>
             ))}
           </tbody>

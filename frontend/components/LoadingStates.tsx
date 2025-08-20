@@ -205,7 +205,7 @@ export function ProgressBar({
   };
 
   const colorClasses = {
-    blue: 'bg-blue-500',
+    blue: 'ci-bg-primary-500',
     green: 'bg-green-500',
     yellow: 'bg-yellow-500',
     red: 'bg-red-500'
@@ -244,7 +244,7 @@ export function DotLoader({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
       {[0, 1, 2].map((i) => (
         <div
           key={i}
-          className={`bg-blue-500 rounded-full animate-pulse ${sizeClasses[size]}`}
+          className={`ci-bg-primary-500 rounded-full animate-pulse ${sizeClasses[size]}`}
           style={{
             animationDelay: `${i * 0.2}s`,
             animationDuration: '1s'

@@ -21,7 +21,7 @@ export default function BillingPage() {
           <li>We will redirect you to the payment provider when available.</li>
           <li>You can continue exploring the app; free features remain available.</li>
         </ul>
-        <Link href="/dashboard" className="inline-flex items-center rounded bg-blue-600 text-white px-4 py-2 font-semibold hover:bg-blue-700">
+  <Link href="/dashboard" className="inline-flex items-center rounded ci-bg-primary ci-text-white px-4 py-2 font-semibold hover:ci-bg-primary">
           Go to Dashboard
         </Link>
       </div>

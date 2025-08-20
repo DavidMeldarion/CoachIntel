@@ -1,17 +1,29 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
+import { CONSENT_VERSION } from "../../lib/consent";
+import { useSession } from "next-auth/react";
 
 export default function WaitlistPage() {
+  const { data: session, status } = useSession();
   const [email, setEmail] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
   const [smsOptIn, setSmsOptIn] = useState(false);
+  const [emailOptIn, setEmailOptIn] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // When authenticated, show friendly banner and hide form submission errors
+  useEffect(() => {
+    if (status === 'authenticated') {
+      setError(null);
+      setSuccess(null);
+    }
+  }, [status]);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -19,6 +31,11 @@ export default function WaitlistPage() {
     setSuccess(null);
     setSubmitting(true);
     try {
+      // If user is logged in, short-circuit with friendly message
+      if (status === 'authenticated') {
+        setError("You're already signed in—no need to join the waitlist. Head to your dashboard.");
+        return;
+      }
       const url = new URL(window.location.href);
       const payload: any = {
         email,
@@ -28,19 +45,24 @@ export default function WaitlistPage() {
         utm_source: url.searchParams.get('utm_source') || undefined,
         utm_medium: url.searchParams.get('utm_medium') || undefined,
         utm_campaign: url.searchParams.get('utm_campaign') || undefined,
-        consent_email: true,
-        consent_sms: false,
+        // explicit consent flags from checkboxes
+        consent_email: emailOptIn,
+        consent_sms: smsOptIn,
+        consent_version: CONSENT_VERSION,
       };
-      if (phone && smsOptIn) {
+      if (phone) {
         payload.phone = phone;
-        payload.consent_sms = true;
       }
-      const res = await fetch("/api/leads", {
+      const res = await fetch("/api/waitlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && (data?.code === 'already_logged_in' || data?.message)) {
+        setError(data?.message || "You're already signed in—no need to join the waitlist.");
+        return;
+      }
       if (!res.ok) throw new Error(data?.detail || data?.error || "Failed to join waitlist");
       setSuccess("You're on the list!");
       setEmail("");
@@ -48,6 +70,7 @@ export default function WaitlistPage() {
       setLastName("");
       setPhone("");
       setSmsOptIn(false);
+  setEmailOptIn(false);
     } catch (err: any) {
       setError(err?.message || "Failed to submit. Please try again.");
     } finally {
@@ -57,62 +80,98 @@ export default function WaitlistPage() {
 
   return (
     <main className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-lg mx-auto bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-        <h1 className="text-2xl font-bold text-blue-700 mb-2">Join the Waitlist</h1>
-        <p className="text-gray-600 mb-6">Enter your details to get early access when we open the doors.</p>
-
-        {success && <div className="mb-4 px-4 py-2 bg-green-50 text-green-700 border border-green-200 rounded">{success}</div>}
-        {error && <div className="mb-4 px-4 py-2 bg-red-50 text-red-700 border border-red-200 rounded">{error}</div>}
-
-        <form onSubmit={onSubmit} className="space-y-4">
+      <div className="ci-card">
+        <div className="sm:flex sm:items-center sm:justify-between">
           <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700">Email</label>
+            <h1 className="ci-heading">Get early access</h1>
+            <p className="ci-subheading">Join the waitlist — we'll email you when your invite is ready.</p>
+          </div>
+        </div>
+
+        {status === 'authenticated' && (
+          <div className="mt-6 mb-4 px-4 py-3 bg-blue-50 text-blue-800 border border-blue-200 rounded">
+            You're signed in as <span className="font-medium">{session?.user?.email || session?.user?.name || 'your account'}</span>. You don't need to join the waitlist.
+            <div className="mt-2">
+              <Link href="/dashboard" className="text-blue-700 underline">Go to your dashboard</Link>
+            </div>
+          </div>
+        )}
+
+        {success && <div className="mt-6 mb-4 px-4 py-2 bg-green-50 text-green-700 border border-green-200 rounded">{success}</div>}
+        {error && <div className="mt-6 mb-4 px-4 py-2 bg-red-50 text-red-700 border border-red-200 rounded">{error}</div>}
+
+  <form onSubmit={onSubmit} className="ci-form" aria-disabled={status === 'authenticated'}>
+          <div>
+            <label htmlFor="email" className="sr-only">Email</label>
             <input
               id="email"
               type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 w-full rounded border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={status === 'authenticated'}
+              className={`ci-input ${status === 'authenticated' ? 'bg-gray-100 cursor-not-allowed' : ''}`}
               placeholder="you@example.com"
             />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+          <div className="ci-form-grid">
             <div>
-              <label htmlFor="firstName" className="block text-sm font-medium text-gray-700">First name (optional)</label>
-              <input id="firstName" value={firstName} onChange={(e)=>setFirstName(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <label htmlFor="firstName" className="sr-only">First name</label>
+              <input id="firstName" value={firstName} onChange={(e)=>setFirstName(e.target.value)} disabled={status === 'authenticated'} className={`ci-input ${status === 'authenticated' ? 'bg-gray-100 cursor-not-allowed' : ''}`} placeholder="First name (optional)" />
             </div>
             <div>
-              <label htmlFor="lastName" className="block text-sm font-medium text-gray-700">Last name (optional)</label>
-              <input id="lastName" value={lastName} onChange={(e)=>setLastName(e.target.value)} className="mt-1 w-full rounded border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <label htmlFor="lastName" className="sr-only">Last name</label>
+              <input id="lastName" value={lastName} onChange={(e)=>setLastName(e.target.value)} disabled={status === 'authenticated'} className={`ci-input ${status === 'authenticated' ? 'bg-gray-100 cursor-not-allowed' : ''}`} placeholder="Last name (optional)" />
             </div>
           </div>
+
           <div>
-            <label htmlFor="phone" className="block text-sm font-medium text-gray-700">Phone (optional)</label>
+            <label htmlFor="phone" className="sr-only">Phone</label>
             <input
               id="phone"
               type="tel"
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
-              className="mt-1 w-full rounded border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="(555) 555-5555"
+              disabled={status === 'authenticated'}
+              className={`ci-input ${status === 'authenticated' ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+              placeholder="Phone (optional)"
             />
-            <label className="mt-2 inline-flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" checked={smsOptIn} onChange={(e)=>setSmsOptIn(e.target.checked)} />
-              I agree to receive SMS updates about my account.
-            </label>
           </div>
-          <button
-            type="submit"
-            disabled={submitting}
-            className={`w-full rounded bg-blue-600 text-white font-semibold px-4 py-2 hover:bg-blue-700 transition ${submitting ? 'opacity-70 cursor-not-allowed' : ''}`}
-          >
-            {submitting ? 'Submitting…' : 'Join Waitlist'}
+
+          <div className="ci-checkbox-row pt-1">
+            <div className="flex items-center">
+              <input id="emailOptIn" type="checkbox" checked={emailOptIn} onChange={(e)=>setEmailOptIn(e.target.checked)} disabled={status === 'authenticated'} className="ci-checkbox" />
+            </div>
+            <div className="ci-field-text">
+              <label htmlFor="emailOptIn" className="font-medium">Email updates</label>
+              <div className="ci-helper">Occasional product news & account messages. <a href="/privacy" className="underline">Privacy</a></div>
+            </div>
+          </div>
+
+          <div className="ci-checkbox-row">
+            <div className="flex items-center">
+              <input id="smsOptIn" type="checkbox" checked={smsOptIn} onChange={(e)=>setSmsOptIn(e.target.checked)} disabled={status === 'authenticated'} className="ci-checkbox" />
+            </div>
+            <div className="ci-field-text">
+              <label htmlFor="smsOptIn" className="font-medium">SMS updates</label>
+              <div className="ci-helper">Msg/data rates may apply. Reply HELP for help, STOP to unsubscribe.</div>
+            </div>
+          </div>
+
+          <input type="hidden" name="consent_version" value={CONSENT_VERSION} />
+
+          <button type="submit" disabled={submitting || status === 'authenticated'} className={`ci-btn-primary ${(submitting || status === 'authenticated') ? 'opacity-70 cursor-not-allowed' : ''}`}>
+            {status === 'authenticated' ? 'Signed in — Waitlist disabled' : (submitting ? 'Submitting…' : 'Request access')}
           </button>
         </form>
 
-        <div className="mt-6 text-center">
-          <Link href="/login" className="text-blue-600 hover:underline">Already have an account? Sign in</Link>
+        <div className="mt-6 text-center text-sm text-slate-500">
+          {status === 'authenticated' ? (
+            <Link href="/dashboard" className="text-sky-600 hover:underline">Go to your dashboard</Link>
+          ) : (
+            <Link href="/login" className="text-sky-600 hover:underline">Already have an account? Sign in</Link>
+          )}
         </div>
       </div>
     </main>

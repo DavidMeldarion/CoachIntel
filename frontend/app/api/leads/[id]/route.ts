@@ -10,8 +10,10 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   const token = await getToken({ req: request as any, secret: process.env.NEXTAUTH_SECRET });
   const headers: Record<string, string> = {};
   if ((token as any)?.email) headers['x-user-email'] = (token as any).email as string;
+  const cookie = (request as any).headers?.get?.('cookie') ?? undefined;
+  if (cookie) headers['cookie'] = cookie as string;
 
-  const resp = await fetch(backendUrl, { headers });
+  const resp = await fetch(backendUrl, { headers, credentials: 'include' });
   const body = await resp.text();
   return new NextResponse(body, { status: resp.status, headers: { 'content-type': resp.headers.get('content-type') || 'application/json' } });
 }
@@ -24,9 +26,11 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   const token = await getToken({ req: request as any, secret: process.env.NEXTAUTH_SECRET });
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if ((token as any)?.email) headers['x-user-email'] = (token as any).email as string;
+  const cookie = (request as any).headers?.get?.('cookie') ?? undefined;
+  if (cookie) headers['cookie'] = cookie as string;
 
   const body = await request.text();
-  const resp = await fetch(backendUrl, { method: 'PATCH', headers, body });
+  const resp = await fetch(backendUrl, { method: 'PATCH', headers, body, credentials: 'include' });
   const text = await resp.text();
   return new NextResponse(text, { status: resp.status, headers: { 'content-type': resp.headers.get('content-type') || 'application/json' } });
 }

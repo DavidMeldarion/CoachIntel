@@ -162,7 +162,7 @@ export default function PurchasePage() {
 											? "bg-gray-600 hover:bg-gray-700"
 											: p.id === "plus"
 											? "bg-purple-600 hover:bg-purple-700"
-											: "bg-blue-600 hover:bg-blue-700"
+											: "ci-bg-primary hover:ci-bg-primary"
 									} ${submitting === p.id ? "opacity-70 cursor-not-allowed" : ""}`}
 									onClick={() => !isCurrent && selectPlan(p.id)}
 									disabled={!!submitting || isCurrent}

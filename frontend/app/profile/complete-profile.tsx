@@ -226,7 +226,7 @@ export default function CompleteProfile() {
         
         <button 
           type="submit" 
-          className="w-full bg-blue-600 text-white font-semibold rounded py-2 hover:bg-blue-700 transition"
+          className="w-full ci-bg-primary text-white font-semibold rounded py-2 hover:ci-bg-primary transition"
         >
           Complete Profile
         </button>

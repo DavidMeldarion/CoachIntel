@@ -230,7 +230,7 @@ export default function Profile() {
             {!isEditing && (
               <button
                 onClick={() => setIsEditing(true)}
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-semibold transition"
+                className="px-4 py-2 ci-bg-primary ci-text-white rounded hover:ci-bg-primary font-semibold transition"
               >
                 Edit Profile
               </button>
@@ -389,7 +389,7 @@ export default function Profile() {
                     {!isEditing && profile?.fireflies_api_key && (
                       <button
                         type="button"
-                        className={`px-3 py-2 rounded bg-blue-600 text-white font-semibold transition hover:bg-blue-700 ${
+                        className={`px-3 py-2 rounded ci-bg-primary ci-text-white font-semibold transition hover:ci-bg-primary ${
                           testingFireflies ? "opacity-50 cursor-not-allowed" : ""
                         }`}
                         onClick={handleTestFireflies}

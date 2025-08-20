@@ -200,6 +200,7 @@ class Consent(Base):
 
     captured_at = Column(DateTime, nullable=False, server_default=func.now())
     source = Column(String, nullable=True)
+    meta = Column(JSON, nullable=True)
 
     __table_args__ = (
         Index('ix_consents_org_captured', 'org_id', 'captured_at'),
@@ -217,6 +218,7 @@ class Consent(Base):
             'status': self.status,
             'captured_at': self.captured_at.isoformat() if self.captured_at else None,
             'source': self.source,
+            'meta': self.meta or {},
         }
 
 class MessageEvent(Base):

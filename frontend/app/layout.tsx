@@ -12,7 +12,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const session = await getServerSession(authOptions);
   return (
     <html lang="en">
-      <body className="bg-gray-50">
+      <body className="bg-gray-50" style={{ fontFamily: 'var(--ci-font-sans)', color: 'rgb(var(--ci-accent))' }}>
         <Providers session={session}>
           <ClientLayout>
             <Navbar />

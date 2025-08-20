@@ -47,6 +47,31 @@ export default function LeadDrawer({ id, onClose }: { id: string; onClose: ()=>v
     setDetail((d)=> d ? { ...d, status: next } : d)
   }
 
+  async function generateInviteAndCopy() {
+    if (!detail?.email) return;
+    try {
+      const resp = await fetch('/api/invites', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email: detail.email }),
+      })
+      if (!resp.ok) throw new Error('Failed to create invite');
+      const data = await resp.json();
+      const url = data?.invite_url as string | undefined;
+      if (url) {
+        await navigator.clipboard.writeText(url);
+        // Optimistically mark invited
+        await setStatus('invited');
+        alert('Invite link copied to clipboard');
+      } else {
+        alert('Invite created but missing URL');
+      }
+    } catch (e: any) {
+      alert(e?.message || 'Failed to create invite');
+    }
+  }
+
   return (
     <div className="fixed inset-0 bg-black/30 flex justify-end">
       <div className="bg-white w-full max-w-lg h-full shadow-xl p-4 flex flex-col">
@@ -120,7 +145,7 @@ export default function LeadDrawer({ id, onClose }: { id: string; onClose: ()=>v
         <div className="border-t pt-3 mt-3 flex items-center justify-between">
           <div className="text-xs text-gray-500">Last contacted: {detail?.last_contacted_at ? new Date(detail.last_contacted_at).toLocaleString() : '-'}</div>
           <div className="flex gap-2">
-            <button onClick={()=>setStatus('invited')} className="px-3 py-1 border rounded">Invite</button>
+            <button onClick={generateInviteAndCopy} className="px-3 py-1 border rounded">Invite (copy link)</button>
             <button onClick={()=>setStatus('converted')} className="px-3 py-1 border rounded">Convert</button>
             <button onClick={()=>setStatus('lost')} className="px-3 py-1 border rounded">Mark Lost</button>
           </div>
