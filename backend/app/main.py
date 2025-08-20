@@ -1400,3 +1400,84 @@ async def postmark_webhook(request: Request):
 
 # async def record_event(...):
 #     ...
+
+# -------------------------
+# Org Admin management (list/add/remove)
+# -------------------------
+class OrgAdminAddIn(BaseModel):
+    user_email: str
+
+async def _is_org_admin(user_id: int, org_id: int) -> bool:
+    try:
+        async with AsyncSessionLocal() as session:
+            res = await session.execute(
+                select(UserOrgRole.id).where(
+                    UserOrgRole.user_id == user_id,
+                    UserOrgRole.org_id == org_id,
+                    UserOrgRole.role == 'admin'
+                )
+            )
+            return res.first() is not None
+    except Exception:
+        return False
+
+@app.get("/orgs/{org_id}/admins")
+async def list_org_admins(org_id: int, user: User = Depends(verify_jwt_user)):
+    # Allow site admins or org admins of this org
+    if not bool(getattr(user, 'site_admin', False)) and not await _is_org_admin(user.id, org_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(
+            select(User).join(UserOrgRole, UserOrgRole.user_id == User.id)
+            .where(UserOrgRole.org_id == org_id, UserOrgRole.role == 'admin')
+            .order_by(User.id)
+        )
+        users = res.scalars().all()
+        return [{"id": u.id, "email": u.email, "first_name": u.first_name, "last_name": u.last_name} for u in users]
+
+@app.post("/orgs/{org_id}/admins")
+async def add_org_admin(org_id: int, payload: OrgAdminAddIn, user: User = Depends(verify_jwt_user)):
+    if not bool(getattr(user, 'site_admin', False)) and not await _is_org_admin(user.id, org_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    # Find or create target user by email
+    target = await get_user_by_email(payload.user_email)
+    if not target:
+        target = await create_or_update_user(email=payload.user_email, first_name="", last_name="")
+        if not target:
+            raise HTTPException(status_code=400, detail="Failed to create target user")
+    async with AsyncSessionLocal() as session:
+        # Idempotent upsert
+        res = await session.execute(
+            select(UserOrgRole).where(
+                UserOrgRole.user_id == target.id,
+                UserOrgRole.org_id == org_id,
+                UserOrgRole.role == 'admin'
+            )
+        )
+        role = res.scalar_one_or_none()
+        if not role:
+            session.add(UserOrgRole(user_id=target.id, org_id=org_id, role='admin'))
+            await session.commit()
+    return {"ok": True, "user_id": target.id}
+
+@app.delete("/orgs/{org_id}/admins/{target_user_id}")
+async def remove_org_admin(org_id: int, target_user_id: int, user: User = Depends(verify_jwt_user)):
+    if not bool(getattr(user, 'site_admin', False)) and not await _is_org_admin(user.id, org_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(
+            select(UserOrgRole).where(
+                UserOrgRole.user_id == target_user_id,
+                UserOrgRole.org_id == org_id,
+                UserOrgRole.role == 'admin'
+            )
+        )
+        role = res.scalar_one_or_none()
+        if role:
+            await session.delete(role)
+            await session.commit()
+    return {"ok": True}
+
+# -------------------------
+# End Org Admin management
+# -------------------------
