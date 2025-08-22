@@ -53,7 +53,7 @@ export default function WaitlistPage() {
       if (phone) {
         payload.phone = phone;
       }
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+  const apiBase = process.env.NEXT_PUBLIC_API_URL;
   const res = await fetch(`${apiBase}/crm/public/leads`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
