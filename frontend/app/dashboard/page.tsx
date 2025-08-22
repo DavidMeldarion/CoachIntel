@@ -261,7 +261,7 @@ function Dashboard() {
 
     try {
   const apiBase = process.env.NEXT_PUBLIC_API_URL;
-  const res = await fetch(`${apiBase}/external-meetings`, {
+  const res = await fetch(`${apiBase}/sync/external-meetings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ source: "fireflies" }),
