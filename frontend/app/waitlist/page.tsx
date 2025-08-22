@@ -53,13 +53,14 @@ export default function WaitlistPage() {
       if (phone) {
         payload.phone = phone;
       }
-      const res = await fetch("/api/waitlist", {
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+  const res = await fetch(`${apiBase}/crm/public/leads`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
-      if (res.status === 409 && (data?.code === 'already_logged_in' || data?.message)) {
+  if (res.status === 409 && (data?.code === 'already_logged_in' || data?.message)) {
         setError(data?.message || "You're already signed in—no need to join the waitlist.");
         return;
       }

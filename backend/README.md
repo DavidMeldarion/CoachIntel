@@ -25,7 +25,7 @@ Ensure DB indexes:
 
 ## Frontend integration
 - Admin route: `/admin/leads`
-- Env: `NEXT_PUBLIC_API_URL` (or `NEXT_PUBLIC_BROWSER_API_URL`) used by frontend proxy helpers
+- Env: `NEXT_PUBLIC_API_URL` used by frontend proxy helpers
 - API calls flow through Next.js API routes, which forward `x-user-email` to authenticate.
 
 ## Getting Started

@@ -2,8 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerApiBase } from '../../../../../../lib/serverApi';
 import { getToken } from 'next-auth/jwt';
 
-export async function DELETE(request: NextRequest, context: { params: Promise<{ orgId: string, userId: string }> }) {
-  const { orgId, userId } = await context.params;
+// Local RouteContext alias
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
+type RouteContext<TPath extends string> = { params: Promise<Record<string,string>> }
+
+export async function DELETE(request: NextRequest, ctx: RouteContext<'/api/orgs/[orgId]/admins/[userId]'>) {
+  const { orgId, userId } = await ctx.params as any;
   const API_BASE = getServerApiBase();
   const backendUrl = `${API_BASE}/orgs/${encodeURIComponent(orgId)}/admins/${encodeURIComponent(userId)}`;
 

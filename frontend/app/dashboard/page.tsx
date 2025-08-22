@@ -260,7 +260,8 @@ function Dashboard() {
     };
 
     try {
-      const res = await fetch("/api/external-meetings", {
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+  const res = await fetch(`${apiBase}/external-meetings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ source: "fireflies" }),

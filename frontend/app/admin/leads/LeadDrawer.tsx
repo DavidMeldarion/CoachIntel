@@ -12,14 +12,15 @@ export default function LeadDrawer({ id, onClose }: { id: string; onClose: ()=>v
   useEffect(()=>{
     let mounted = true
     ;(async()=>{
-      const res = await fetch(`/api/leads/${encodeURIComponent(id)}`, { credentials: 'include' })
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+      const res = await fetch(`${apiBase}/leads/${encodeURIComponent(id)}`, { credentials: 'include' })
       if (res.ok) {
         const d: LeadDetailOut = await res.json()
         if (!mounted) return
         setDetail(d)
         setNotes(d.notes || '')
       }
-      const e = await fetch(`/api/leads/${encodeURIComponent(id)}/events`, { credentials: 'include' })
+      const e = await fetch(`${apiBase}/leads/${encodeURIComponent(id)}/events`, { credentials: 'include' })
       if (e.ok) setEvents(await e.json())
     })()
     return ()=>{ mounted = false }
@@ -50,7 +51,8 @@ export default function LeadDrawer({ id, onClose }: { id: string; onClose: ()=>v
   async function generateInviteAndCopy() {
     if (!detail?.email) return;
     try {
-      const resp = await fetch('/api/invites', {
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+  const resp = await fetch(`${apiBase}/invites`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         credentials: 'include',
