@@ -1,18 +1,23 @@
-export const dynamic = 'force-dynamic'
+import { NextResponse } from 'next/server'
+import type { NextRequest } from 'next/server'
+import { backendFetch } from '../../../../../lib/serverFetch'
 
-export async function GET(request: Request, context: any) {
+// Local RouteContext alias (dynamic params Promise pattern)
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
+type RouteContext<TPath extends string> = { params: Promise<Record<string,string>> }
+
+export const dynamic = 'force-dynamic';
+
+export async function GET(
+ _req: NextRequest,
+ ctx: RouteContext<'/api/admin/leads/[id]'>
+) {
   try {
-    const id = context?.params?.id as string
-    const res = await fetch(`/api/leads/${encodeURIComponent(id)}`, { cache: 'no-store' })
+    const { id } = await ctx.params
+    const res = await backendFetch(`/leads/${encodeURIComponent(id)}`)
     const body = await res.text()
-    return new Response(body, {
-      status: res.status,
-      headers: { 'content-type': res.headers.get('content-type') || 'application/json' },
-    })
-  } catch {
-    return new Response(JSON.stringify({ error: 'Not implemented' }), {
-      status: 404,
-      headers: { 'content-type': 'application/json' },
-    })
+    return new NextResponse(body, { status: res.status, headers: { 'content-type': res.headers.get('content-type') || 'application/json' } })
+  } catch (err) {
+    return NextResponse.json({ error: 'Not implemented' }, { status: 404 })
   }
 }

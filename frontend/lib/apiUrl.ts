@@ -1,7 +1,7 @@
 // Utility function to properly join API base URL with endpoint paths
 export function getApiUrl(endpoint: string = ''): string {
   // Check if we have a direct API URL configured (Railway deployment)
-  const directApiUrl = process.env.NEXT_PUBLIC_BROWSER_API_URL || process.env.NEXT_PUBLIC_API_URL;
+  const directApiUrl = process.env.NEXT_PUBLIC_API_URL;
   
   // If we have a direct API URL, use it (Railway approach)
   if (directApiUrl) {

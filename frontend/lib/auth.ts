@@ -13,6 +13,9 @@ declare module 'next-auth' {
       plan?: 'free' | 'plus' | 'pro' | null;
     };
     accessToken?: string;
+    // Admin flags
+    siteAdmin?: boolean;
+    orgAdminIds?: number[];
   }
 
   interface User {
@@ -27,6 +30,9 @@ declare module 'next-auth/jwt' {
   interface JWT {
     accessToken?: string;
     plan?: 'free' | 'plus' | 'pro' | null;
+    // Admin flags mirrored on the token
+    siteAdmin?: boolean;
+    orgAdminIds?: number[];
   }
 }
 
@@ -104,7 +110,9 @@ export const authOptions: NextAuthOptions = {
           if (profileResp.ok) {
             const profile = await profileResp.json();
             (token as any).plan = profile?.plan ?? null;
-            console.debug('[NextAuth][jwt] stored plan on token', (token as any).plan);
+            token.siteAdmin = !!profile?.site_admin;
+            token.orgAdminIds = Array.isArray(profile?.org_admin_ids) ? profile.org_admin_ids : [];
+            console.debug('[NextAuth][jwt] stored plan and roles on token', { plan: (token as any).plan, siteAdmin: token.siteAdmin, orgAdminIds: token.orgAdminIds });
           }
         } catch (error) {
           console.warn('[NextAuth][jwt] sync failed (non-fatal)', (error as Error)?.message);
@@ -115,7 +123,7 @@ export const authOptions: NextAuthOptions = {
         (token as any).email = user.email; // store for later refreshes
         (token as any).planCheckedAt = Date.now();
       } else {
-        // On subsequent requests, refresh plan from backend (light TTL)
+        // On subsequent requests, refresh plan & roles from backend (light TTL)
         const email = (token as any).email as string | undefined;
         const lastChecked = (token as any).planCheckedAt as number | undefined;
         const shouldRefresh = !lastChecked || Date.now() - lastChecked > 15000; // 15s TTL
@@ -125,7 +133,9 @@ export const authOptions: NextAuthOptions = {
             if (resp.ok) {
               const profile = await resp.json();
               (token as any).plan = profile?.plan ?? null;
-              console.debug('[NextAuth][jwt] refreshed plan on token', (token as any).plan);
+              token.siteAdmin = !!profile?.site_admin;
+              token.orgAdminIds = Array.isArray(profile?.org_admin_ids) ? profile.org_admin_ids : [];
+              console.debug('[NextAuth][jwt] refreshed plan and roles on token', { plan: (token as any).plan, siteAdmin: token.siteAdmin, orgAdminIds: token.orgAdminIds });
             }
           } catch {}
           (token as any).planCheckedAt = Date.now();
@@ -138,7 +148,10 @@ export const authOptions: NextAuthOptions = {
         session.user.id = token.sub!;
         session.accessToken = token.accessToken as string;
         session.user.plan = (token.plan ?? null) as any;
-        console.debug('[NextAuth][session] hydrated', { email: session.user.email, plan: session.user.plan });
+        // expose admin flags
+        (session as any).siteAdmin = (token as any).siteAdmin === true;
+        (session as any).orgAdminIds = (token as any).orgAdminIds || [];
+        console.debug('[NextAuth][session] hydrated', { email: session.user.email, plan: session.user.plan, siteAdmin: (session as any).siteAdmin, orgAdminIds: (session as any).orgAdminIds });
       }
       return session;
     },

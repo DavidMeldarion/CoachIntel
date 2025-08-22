@@ -2,10 +2,14 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../../../lib/auth";
 import { getServerApiBase } from "../../../../lib/serverApi";
 
+// Local RouteContext alias
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
+type RouteContext<TPath extends string> = { params: Promise<Record<string,string>> }
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: Request, context: any) {
+export async function GET(req: Request, ctx: RouteContext<'/api/meetings/[meetingId]'>) {
   const session = await getServerSession(authOptions);
   const email = session?.user?.email || null;
   if (!email) {
@@ -14,7 +18,7 @@ export async function GET(req: Request, context: any) {
       headers: { "Content-Type": "application/json" },
     });
   }
-  const meetingId = context?.params?.meetingId as string;
+  const { meetingId } = await ctx.params as any;
   const API_BASE = getServerApiBase();
   const url = `${API_BASE}/meetings/${encodeURIComponent(meetingId)}`;
   const cookie = req.headers.get("cookie") || "";

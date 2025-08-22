@@ -12,14 +12,15 @@ export default function LeadDrawer({ id, onClose }: { id: string; onClose: ()=>v
   useEffect(()=>{
     let mounted = true
     ;(async()=>{
-      const res = await fetch(`/api/leads/${encodeURIComponent(id)}`, { credentials: 'include' })
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+      const res = await fetch(`${apiBase}/leads/${encodeURIComponent(id)}`, { credentials: 'include' })
       if (res.ok) {
         const d: LeadDetailOut = await res.json()
         if (!mounted) return
         setDetail(d)
         setNotes(d.notes || '')
       }
-      const e = await fetch(`/api/leads/${encodeURIComponent(id)}/events`, { credentials: 'include' })
+      const e = await fetch(`${apiBase}/leads/${encodeURIComponent(id)}/events`, { credentials: 'include' })
       if (e.ok) setEvents(await e.json())
     })()
     return ()=>{ mounted = false }
@@ -45,6 +46,32 @@ export default function LeadDrawer({ id, onClose }: { id: string; onClose: ()=>v
   async function setStatus(next: any) {
     await updateLeadStatus(id, next)
     setDetail((d)=> d ? { ...d, status: next } : d)
+  }
+
+  async function generateInviteAndCopy() {
+    if (!detail?.email) return;
+    try {
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+  const resp = await fetch(`${apiBase}/invites`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email: detail.email }),
+      })
+      if (!resp.ok) throw new Error('Failed to create invite');
+      const data = await resp.json();
+      const url = data?.invite_url as string | undefined;
+      if (url) {
+        await navigator.clipboard.writeText(url);
+        // Optimistically mark invited
+        await setStatus('invited');
+        alert('Invite link copied to clipboard');
+      } else {
+        alert('Invite created but missing URL');
+      }
+    } catch (e: any) {
+      alert(e?.message || 'Failed to create invite');
+    }
   }
 
   return (
@@ -120,7 +147,7 @@ export default function LeadDrawer({ id, onClose }: { id: string; onClose: ()=>v
         <div className="border-t pt-3 mt-3 flex items-center justify-between">
           <div className="text-xs text-gray-500">Last contacted: {detail?.last_contacted_at ? new Date(detail.last_contacted_at).toLocaleString() : '-'}</div>
           <div className="flex gap-2">
-            <button onClick={()=>setStatus('invited')} className="px-3 py-1 border rounded">Invite</button>
+            <button onClick={generateInviteAndCopy} className="px-3 py-1 border rounded">Invite (copy link)</button>
             <button onClick={()=>setStatus('converted')} className="px-3 py-1 border rounded">Convert</button>
             <button onClick={()=>setStatus('lost')} className="px-3 py-1 border rounded">Mark Lost</button>
           </div>

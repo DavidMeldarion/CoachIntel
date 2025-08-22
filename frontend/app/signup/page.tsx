@@ -1,16 +1,41 @@
 'use client'
 
 import Link from "next/link";
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import GoogleLoginButton from "../../components/GoogleLoginButton";
 import { AuthErrorBoundary } from "../../components/ErrorBoundary";
 import { LoadingOverlay } from "../../components/LoadingStates";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
+import { signIn } from "next-auth/react";
 
 function SignupPageContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const invite = searchParams.get('invite');
   const access = searchParams.get('access');
-  const allowed = !!access && access.length >= 8; // placeholder access code check
+  const allowed = !!invite || (!!access && access.length >= 8); // invite token or fallback access code
+
+  // If invite present, validate & redeem up front, then stay on page for Google Signup
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!invite) return;
+      try {
+        const v = await fetch(`/api/invites/validate?token=${encodeURIComponent(invite)}`);
+        const ok = v.ok && (await v.clone().json()).ok;
+        if (!ok) throw new Error('Invalid invite');
+        const r = await fetch(`/api/invites/redeem`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ token: invite }),
+        });
+        if (!r.ok) throw new Error('Redeem failed');
+      } catch {
+        if (!cancelled) router.replace('/signup?error=invalid_invite');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [invite, router]);
 
   if (!allowed) {
     return (

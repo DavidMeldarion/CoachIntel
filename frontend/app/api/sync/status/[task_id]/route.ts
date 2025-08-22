@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerApiBase } from "../../../../../lib/serverApi";
 
+// Local RouteContext alias
+// eslint-disable-next-line @typescript-eslint/consistent-type-definitions
+type RouteContext<TPath extends string> = { params: Promise<Record<string,string>> }
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: NextRequest) {
-  // Extract task_id from the URL
-  const task_id = request.nextUrl.pathname.split("/").pop();
+export async function GET(request: NextRequest, ctx: RouteContext<'/api/sync/status/[task_id]'>) {
+  const { task_id } = await ctx.params as any
   const API_BASE = getServerApiBase();
   const backendUrl = `${API_BASE}/sync/status/${task_id}`;
   try {

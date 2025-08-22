@@ -5,7 +5,7 @@ This is the Next.js (App Router) + Tailwind CSS frontend for CoachIntel.
 ## Admin
 - Admin route: `/admin/leads` (auth required)
 - Env:
-  - `NEXT_PUBLIC_API_URL` or `NEXT_PUBLIC_BROWSER_API_URL` for direct backend access
+  - `NEXT_PUBLIC_API_URL` for direct backend access
 - The app proxies requests from `/api/*` to the FastAPI server using server API routes and passes `x-user-email` from the NextAuth session.
 
 ## Endpoints used (backend)

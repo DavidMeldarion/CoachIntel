@@ -1,9 +1,13 @@
 export const dynamic = 'force-dynamic'
 
-export async function GET(request: Request) {
+import { NextRequest, NextResponse } from 'next/server'
+import { backendFetch } from '../../../../lib/serverFetch'
+
+// Previously proxied via /api/leads (internal hop). Now calls backend directly.
+export async function GET(request: NextRequest) {
   const url = new URL(request.url)
-  const qp = url.search
-  const res = await fetch(`/api/leads${qp}`, { cache: 'no-store' })
-  const body = await res.text()
-  return new Response(body, { status: res.status, headers: { 'content-type': res.headers.get('content-type') || 'application/json' } })
+  const search = url.search || ''
+  const resp = await backendFetch(`/leads${search}`)
+  const body = await resp.text()
+  return new NextResponse(body, { status: resp.status, headers: { 'content-type': resp.headers.get('content-type') || 'application/json' } })
 }

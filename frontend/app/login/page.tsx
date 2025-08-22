@@ -7,6 +7,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import GoogleLoginButton from "../../components/GoogleLoginButton";
 import { AuthErrorBoundary } from "../../components/ErrorBoundary";
 import { LoadingOverlay } from "../../components/LoadingStates";
+import { signIn } from "next-auth/react";
 
 function isSafeCallbackUrl(url: string | null) {
   if (!url) return false;
@@ -22,6 +23,7 @@ function LoginPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const error = searchParams.get('error');
+  const invite = searchParams.get('invite');
   const rawCallback = searchParams.get('callbackUrl');
   const callbackUrl = useMemo(() => (isSafeCallbackUrl(rawCallback) ? rawCallback! : '/dashboard'), [rawCallback]);
 
@@ -35,6 +37,12 @@ function LoginPageContent() {
   // Show loading while checking authentication
   if (status === 'loading') {
     return <LoadingOverlay message="Checking authentication..." />;
+  }
+
+  // If invite token is present, send them to signup which handles redemption
+  if (invite && status !== 'authenticated') {
+    router.replace(`/signup?invite=${encodeURIComponent(invite)}&callbackUrl=${encodeURIComponent(callbackUrl)}`);
+    return <LoadingOverlay message="Redirecting to signup..." />;
   }
 
   // If authenticated, show redirect overlay to avoid blank screen
@@ -78,6 +86,8 @@ function LoginPageContent() {
     </AuthErrorBoundary>
   );
 }
+
+// Invite handling moved to signup page
 
 export default function Login() {
   return (

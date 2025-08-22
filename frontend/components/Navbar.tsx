@@ -55,6 +55,10 @@ export default function Navbar() {
   const currentPlan = (session as any)?.user?.plan as 'free'|'plus'|'pro'|undefined;
   const purchaseHref = currentPlan ? `/purchase?current=${currentPlan}` : '/purchase';
 
+  const siteAdmin = (session as any)?.siteAdmin === true;
+  const orgAdminIds = ((session as any)?.orgAdminIds as number[] | undefined) || [];
+  const canSeeAdmin = siteAdmin || orgAdminIds.length > 0;
+
   if (loading) {
     return (
       <nav className="w-full flex items-center justify-between px-8 py-4 bg-white shadow mb-8">
@@ -74,6 +78,9 @@ export default function Navbar() {
           <>
             <Link href="/dashboard" className="text-gray-700 font-medium hover:text-blue-700 transition">Dashboard</Link>
             <Link href="/timeline" className="text-gray-700 font-medium hover:text-blue-700 transition">Meeting Timeline</Link>
+            {canSeeAdmin && (
+              <Link href="/admin/leads" className="text-gray-700 font-medium hover:text-blue-700 transition">Admin</Link>
+            )}
           </>
         )}
       </div>
@@ -97,7 +104,6 @@ export default function Navbar() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
           </button>
-          
           {dropdownOpen && (
             <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50 border border-gray-200">
               <Link
@@ -121,6 +127,15 @@ export default function Navbar() {
               >
                 Upgrade
               </Link>
+              {canSeeAdmin && (
+                <Link
+                  href="/admin/leads"
+                  className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition"
+                  onClick={() => setDropdownOpen(false)}
+                >
+                  Admin
+                </Link>
+              )}
               <hr className="my-1" />
               <button
                 onClick={handleLogout}
@@ -132,7 +147,7 @@ export default function Navbar() {
           )}
         </div>
       ) : (
-        <Link href="/login" className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-semibold transition">Login</Link>
+  <Link href="/login" className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-semibold transition">Login</Link>
       )}
     </nav>
   );

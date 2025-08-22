@@ -2,13 +2,11 @@
 // Priority:
 // 1. INTERNAL_API_URL (docker-compose internal hostname)
 // 2. API_URL (explicit backend base URL)
-// 3. NEXT_PUBLIC_BROWSER_API_URL or NEXT_PUBLIC_API_URL (public backend base used by browser)
-// 4. Default to docker internal hostname in dev
+// 3. Default to docker internal hostname in dev
 export function getServerApiBase(): string {
   const fromEnv =
     process.env.INTERNAL_API_URL ||
     process.env.API_URL ||
-    process.env.NEXT_PUBLIC_BROWSER_API_URL ||
     process.env.NEXT_PUBLIC_API_URL;
 
   if (fromEnv) return fromEnv.replace(/\/+$/, "");

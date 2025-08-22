@@ -26,6 +26,12 @@ async def current_user(request: Request) -> User:
     from app.main import verify_jwt_user  # local import to break cycle
     return await verify_jwt_user(request)
 
+# Only site admins may access public leads
+async def site_admin_only(user: User = Depends(current_user)) -> User:
+    if not getattr(user, 'site_admin', False):
+        raise HTTPException(status_code=403, detail="Forbidden: site admin only")
+    return user
+
 # Helper to get latest consent status per channel
 async def _latest_consent(session: AsyncSession, lead_id: UUID, channel: str) -> str:
     stmt = (
@@ -47,15 +53,12 @@ async def list_leads(
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
     tag: Optional[str] = Query(default=None),
-    user: User = Depends(current_user),
+    user: User = Depends(site_admin_only),
 ):
-    org_id = getattr(user, 'org_id', None)
     async with AsyncSessionLocal() as session:
         conds = []
-        if org_id is not None:
-            conds.append(Lead.org_id == org_id)
-        else:
-            conds.append(Lead.org_id == None)  # noqa: E711
+        # Site admin view is strictly public leads (org_id is null)
+        conds.append(Lead.org_id == None)  # noqa: E711
         if status:
             if status not in ALLOWED_LEAD_STATUS:
                 raise HTTPException(status_code=400, detail="Invalid status filter")
@@ -101,11 +104,9 @@ async def list_leads(
         return LeadListResponse(items=items, total=total, limit=limit, offset=offset)
 
 @router.get("/{lead_id}", response_model=LeadDetailOut)
-async def get_lead(lead_id: UUID, user: User = Depends(current_user)):
-    org_id = getattr(user, 'org_id', None)
+async def get_lead(lead_id: UUID, user: User = Depends(site_admin_only)):
     async with AsyncSessionLocal() as session:
-        stmt = select(Lead).where(Lead.id == lead_id)
-        stmt = stmt.where(Lead.org_id == org_id) if org_id is not None else stmt.where(Lead.org_id == None)  # noqa: E711
+        stmt = select(Lead).where(Lead.id == lead_id, Lead.org_id == None)  # noqa: E711
         res = await session.execute(stmt)
         lead = res.scalar_one_or_none()
         if not lead:
@@ -132,15 +133,10 @@ async def get_lead(lead_id: UUID, user: User = Depends(current_user)):
         )
 
 @router.get("/{lead_id}/events", response_model=List[LeadEventOut])
-async def get_lead_events(lead_id: UUID, user: User = Depends(current_user)):
-    org_id = getattr(user, 'org_id', None)
+async def get_lead_events(lead_id: UUID, user: User = Depends(site_admin_only)):
     async with AsyncSessionLocal() as session:
         # ensure access
-        lead_stmt = select(Lead.id, Lead.org_id).where(Lead.id == lead_id)
-        if org_id is not None:
-            lead_stmt = lead_stmt.where(Lead.org_id == org_id)
-        else:
-            lead_stmt = lead_stmt.where(Lead.org_id == None)  # noqa: E711
+        lead_stmt = select(Lead.id, Lead.org_id).where(Lead.id == lead_id, Lead.org_id == None)  # noqa: E711
         chk = await session.execute(lead_stmt)
         if chk.first() is None:
             raise HTTPException(status_code=404, detail="Lead not found")
@@ -163,11 +159,9 @@ async def get_lead_events(lead_id: UUID, user: User = Depends(current_user)):
         ]
 
 @router.patch("/{lead_id}", response_model=LeadDetailOut)
-async def patch_lead(lead_id: UUID, body: LeadPatchIn, user: User = Depends(current_user)):
-    org_id = getattr(user, 'org_id', None)
+async def patch_lead(lead_id: UUID, body: LeadPatchIn, user: User = Depends(site_admin_only)):
     async with AsyncSessionLocal() as session:
-        stmt = select(Lead).where(Lead.id == lead_id)
-        stmt = stmt.where(Lead.org_id == org_id) if org_id is not None else stmt.where(Lead.org_id == None)  # noqa: E711
+        stmt = select(Lead).where(Lead.id == lead_id, Lead.org_id == None)  # noqa: E711
         res = await session.execute(stmt)
         lead = res.scalar_one_or_none()
         if not lead:
@@ -202,11 +196,9 @@ async def patch_lead(lead_id: UUID, body: LeadPatchIn, user: User = Depends(curr
         )
 
 @router.patch("/{lead_id}/notes")
-async def patch_lead_notes(lead_id: UUID, body: dict, user: User = Depends(current_user)):
-    org_id = getattr(user, 'org_id', None)
+async def patch_lead_notes(lead_id: UUID, body: dict, user: User = Depends(site_admin_only)):
     async with AsyncSessionLocal() as session:
-        stmt = select(Lead).where(Lead.id == lead_id)
-        stmt = stmt.where(Lead.org_id == org_id) if org_id is not None else stmt.where(Lead.org_id == None)  # noqa: E711
+        stmt = select(Lead).where(Lead.id == lead_id, Lead.org_id == None)  # noqa: E711
         res = await session.execute(stmt)
         lead = res.scalar_one_or_none()
         if not lead:
@@ -217,14 +209,12 @@ async def patch_lead_notes(lead_id: UUID, body: dict, user: User = Depends(curre
         return {"ok": True}
 
 @router.post("/{lead_id}/status")
-async def update_status(lead_id: UUID, body: dict, user: User = Depends(current_user)):
+async def update_status(lead_id: UUID, body: dict, user: User = Depends(site_admin_only)):
     status = (body or {}).get("status")
     if status not in ALLOWED_LEAD_STATUS:
         raise HTTPException(status_code=400, detail="Invalid status value")
-    org_id = getattr(user, 'org_id', None)
     async with AsyncSessionLocal() as session:
-        stmt = select(Lead).where(Lead.id == lead_id)
-        stmt = stmt.where(Lead.org_id == org_id) if org_id is not None else stmt.where(Lead.org_id == None)  # noqa: E711
+        stmt = select(Lead).where(Lead.id == lead_id, Lead.org_id == None)  # noqa: E711
         res = await session.execute(stmt)
         lead = res.scalar_one_or_none()
         if not lead:
@@ -234,14 +224,11 @@ async def update_status(lead_id: UUID, body: dict, user: User = Depends(current_
         return {"ok": True}
 
 @router.post("/export")
-async def export_leads(filters: LeadExportFilterIn, user: User = Depends(current_user)):
-    org_id = getattr(user, 'org_id', None)
+async def export_leads(filters: LeadExportFilterIn, user: User = Depends(site_admin_only)):
     async with AsyncSessionLocal() as session:
         conds = []
-        if org_id is not None:
-            conds.append(Lead.org_id == org_id)
-        else:
-            conds.append(Lead.org_id == None)  # noqa: E711
+        # Site admin export is for public leads only (org_id null)
+        conds.append(Lead.org_id == None)  # noqa: E711
         if filters.status:
             conds.append(Lead.status == filters.status)
         if filters.q:

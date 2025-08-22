@@ -70,7 +70,8 @@ export default function PurchasePage() {
 			// Only allow immediate persistence for the free plan.
 			if (plan === "free") {
 				// Call our Next proxy which forwards cookies and email
-				const res = await fetch("/api/user", {
+				const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+				const res = await fetch(`${apiBase}/user`, {
 					method: "PUT",
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ plan }),
