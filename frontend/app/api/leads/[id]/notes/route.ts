@@ -8,6 +8,7 @@ type RouteContext<TPath extends string> = { params: Promise<Record<string, strin
 export async function PATCH(request: NextRequest, ctx: RouteContext<'/api/leads/[id]/notes'>) {
   const { id } = await ctx.params
   const API_BASE = getServerApiBase()
+
   const backendUrl = `${API_BASE}/leads/${encodeURIComponent(id)}/notes`
   const token = await getToken({ req: request as any, secret: process.env.NEXTAUTH_SECRET })
   const headers: Record<string,string> = { 'content-type': 'application/json' }
