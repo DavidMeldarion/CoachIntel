@@ -43,7 +43,7 @@ function SignupPageContent() {
         <div className="bg-white rounded-xl shadow-lg p-8 w-full max-w-md border border-gray-100 text-center">
           <h2 className="text-2xl font-bold mb-4 text-blue-700">Signup by Invitation Only</h2>
           <p className="text-gray-600 mb-6">We're currently onboarding users from our waitlist. Please join the waitlist to request early access.</p>
-          <Link href="/waitlist" className="inline-flex items-center rounded ci-bg-primary ci-text-white px-4 py-2 font-semibold hover:ci-bg-primary">Join Waitlist</Link>
+          <Link href="/waitlist" className="inline-flex items-center rounded bg-blue-600 text-white px-4 py-2 font-semibold hover:bg-blue-700">Join Waitlist</Link>
         </div>
       </main>
     );

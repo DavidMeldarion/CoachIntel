@@ -79,7 +79,7 @@ export default function OrgAdminsPage() {
           placeholder="admin@email.com"
           className="border rounded px-3 py-2 w-80"
         />
-  <button onClick={addAdmin} className="px-4 py-2 ci-bg-primary ci-text-white rounded hover:ci-bg-primary">Add Admin</button>
+  <button onClick={addAdmin} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Add Admin</button>
       </div>
 
   {/* Invite creation moved to Leads page */}

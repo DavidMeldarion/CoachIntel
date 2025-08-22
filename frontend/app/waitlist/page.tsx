@@ -80,11 +80,11 @@ export default function WaitlistPage() {
 
   return (
     <main className="min-h-screen bg-gray-50 p-6">
-      <div className="ci-card">
+      <div className="max-w-2xl mx-auto bg-white rounded-xl border border-gray-200 shadow-sm p-8">
         <div className="sm:flex sm:items-center sm:justify-between">
           <div>
-            <h1 className="ci-heading">Get early access</h1>
-            <p className="ci-subheading">Join the waitlist — we'll email you when your invite is ready.</p>
+            <h1 className="text-2xl font-bold text-slate-800">Get early access</h1>
+            <p className="text-sm text-slate-600 mt-1">Join the waitlist — we'll email you when your invite is ready.</p>
           </div>
         </div>
 
@@ -100,7 +100,7 @@ export default function WaitlistPage() {
         {success && <div className="mt-6 mb-4 px-4 py-2 bg-green-50 text-green-700 border border-green-200 rounded">{success}</div>}
         {error && <div className="mt-6 mb-4 px-4 py-2 bg-red-50 text-red-700 border border-red-200 rounded">{error}</div>}
 
-  <form onSubmit={onSubmit} className="ci-form" aria-disabled={status === 'authenticated'}>
+  <form onSubmit={onSubmit} className="mt-6 grid grid-cols-1 gap-4" aria-disabled={status === 'authenticated'}>
           <div>
             <label htmlFor="email" className="sr-only">Email</label>
             <input
@@ -110,19 +110,19 @@ export default function WaitlistPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               disabled={status === 'authenticated'}
-              className={`ci-input ${status === 'authenticated' ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+              className={`w-full rounded-md border border-gray-300 px-4 py-3 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500 ${status === 'authenticated' ? 'bg-gray-100 cursor-not-allowed' : ''}`}
               placeholder="you@example.com"
             />
           </div>
 
-          <div className="ci-form-grid">
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label htmlFor="firstName" className="sr-only">First name</label>
-              <input id="firstName" value={firstName} onChange={(e)=>setFirstName(e.target.value)} disabled={status === 'authenticated'} className={`ci-input ${status === 'authenticated' ? 'bg-gray-100 cursor-not-allowed' : ''}`} placeholder="First name (optional)" />
+              <input id="firstName" value={firstName} onChange={(e)=>setFirstName(e.target.value)} disabled={status === 'authenticated'} className={`w-full rounded-md border border-gray-300 px-4 py-3 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500 ${status === 'authenticated' ? 'bg-gray-100 cursor-not-allowed' : ''}`} placeholder="First name (optional)" />
             </div>
             <div>
               <label htmlFor="lastName" className="sr-only">Last name</label>
-              <input id="lastName" value={lastName} onChange={(e)=>setLastName(e.target.value)} disabled={status === 'authenticated'} className={`ci-input ${status === 'authenticated' ? 'bg-gray-100 cursor-not-allowed' : ''}`} placeholder="Last name (optional)" />
+              <input id="lastName" value={lastName} onChange={(e)=>setLastName(e.target.value)} disabled={status === 'authenticated'} className={`w-full rounded-md border border-gray-300 px-4 py-3 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500 ${status === 'authenticated' ? 'bg-gray-100 cursor-not-allowed' : ''}`} placeholder="Last name (optional)" />
             </div>
           </div>
 
@@ -134,34 +134,34 @@ export default function WaitlistPage() {
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               disabled={status === 'authenticated'}
-              className={`ci-input ${status === 'authenticated' ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+              className={`w-full rounded-md border border-gray-300 px-4 py-3 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500 ${status === 'authenticated' ? 'bg-gray-100 cursor-not-allowed' : ''}`}
               placeholder="Phone (optional)"
             />
           </div>
 
-          <div className="ci-checkbox-row pt-1">
+          <div className="flex items-start gap-4 pt-1">
             <div className="flex items-center">
-              <input id="emailOptIn" type="checkbox" checked={emailOptIn} onChange={(e)=>setEmailOptIn(e.target.checked)} disabled={status === 'authenticated'} className="ci-checkbox" />
+              <input id="emailOptIn" type="checkbox" checked={emailOptIn} onChange={(e)=>setEmailOptIn(e.target.checked)} disabled={status === 'authenticated'} className="h-4 w-4 rounded text-sky-600 border-gray-300" />
             </div>
-            <div className="ci-field-text">
+            <div className="text-sm text-slate-700">
               <label htmlFor="emailOptIn" className="font-medium">Email updates</label>
-              <div className="ci-helper">Occasional product news & account messages. <a href="/privacy" className="underline">Privacy</a></div>
+              <div className="text-xs text-slate-500">Occasional product news & account messages. <a href="/privacy" className="underline">Privacy</a></div>
             </div>
           </div>
 
-          <div className="ci-checkbox-row">
+          <div className="flex items-start gap-4">
             <div className="flex items-center">
-              <input id="smsOptIn" type="checkbox" checked={smsOptIn} onChange={(e)=>setSmsOptIn(e.target.checked)} disabled={status === 'authenticated'} className="ci-checkbox" />
+              <input id="smsOptIn" type="checkbox" checked={smsOptIn} onChange={(e)=>setSmsOptIn(e.target.checked)} disabled={status === 'authenticated'} className="h-4 w-4 rounded text-sky-600 border-gray-300" />
             </div>
-            <div className="ci-field-text">
+            <div className="text-sm text-slate-700">
               <label htmlFor="smsOptIn" className="font-medium">SMS updates</label>
-              <div className="ci-helper">Msg/data rates may apply. Reply HELP for help, STOP to unsubscribe.</div>
+              <div className="text-xs text-slate-500">Msg/data rates may apply. Reply HELP for help, STOP to unsubscribe.</div>
             </div>
           </div>
 
           <input type="hidden" name="consent_version" value={CONSENT_VERSION} />
 
-          <button type="submit" disabled={submitting || status === 'authenticated'} className={`ci-btn-primary ${(submitting || status === 'authenticated') ? 'opacity-70 cursor-not-allowed' : ''}`}>
+          <button type="submit" disabled={submitting || status === 'authenticated'} className={`w-full rounded-md bg-sky-600 text-white font-semibold px-4 py-3 hover:bg-sky-700 transition ${(submitting || status === 'authenticated') ? 'opacity-70 cursor-not-allowed' : ''}`}>
             {status === 'authenticated' ? 'Signed in — Waitlist disabled' : (submitting ? 'Submitting…' : 'Request access')}
           </button>
         </form>

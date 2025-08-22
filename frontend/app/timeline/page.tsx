@@ -137,7 +137,7 @@ export default function MeetingTimeline() {
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-semibold">Your Meetings</h3>
               <button
-                className="px-3 py-1 rounded ci-bg-primary ci-text-white text-sm font-semibold hover:ci-bg-primary"
+                className="px-3 py-1 rounded bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700"
                 onClick={fetchStoredMeetings}
                 disabled={loading}
               >
@@ -291,7 +291,7 @@ export default function MeetingTimeline() {
                       <div className="mt-4">
                         <a
                           href={`/timeline/${meeting.id}`}
-                          className="inline-block px-4 py-2 ci-bg-primary ci-text-white rounded hover:ci-bg-primary transition"
+                          className="inline-block px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
                         >
                           View Full Transcript
                         </a>

@@ -20,7 +20,7 @@ export default function Home() {
             <div className="mt-10 flex items-center justify-center gap-x-6">
               <Link
                 href="/waitlist"
-                className="rounded-md ci-bg-primary px-6 py-3 text-lg font-semibold ci-text-white shadow-sm hover:ci-bg-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                className="rounded-md bg-blue-600 px-6 py-3 text-lg font-semibold text-white shadow-sm hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
               >
                 Join Waitlist
               </Link>
@@ -114,7 +114,7 @@ export default function Home() {
             <dl className="grid max-w-xl grid-cols-1 gap-x-8 gap-y-16 lg:max-w-none lg:grid-cols-2">
               <div className="flex flex-col">
                 <dt className="flex items-center gap-x-3 text-base font-semibold leading-7 text-gray-900">
-                  <div className="h-10 w-10 flex items-center justify-center rounded-lg ci-bg-primary">
+                  <div className="h-10 w-10 flex items-center justify-center rounded-lg bg-blue-600">
                     <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
                     </svg>
@@ -131,7 +131,7 @@ export default function Home() {
               
               <div className="flex flex-col">
                 <dt className="flex items-center gap-x-3 text-base font-semibold leading-7 text-gray-900">
-                  <div className="h-10 w-10 flex items-center justify-center rounded-lg ci-bg-primary">
+                  <div className="h-10 w-10 flex items-center justify-center rounded-lg bg-blue-600">
                     <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3-9v11.25A2.25 2.25 0 0116.5 21h-7.5A2.25 2.25 0 017 18.75V4.5a2.25 2.25 0 012.25-2.25h7.5A2.25 2.25 0 0118.75 4.5V9M9 7.5h3.75m0 0l1.5-1.5M12.75 6v1.5m0 0l1.5-1.5" />
                     </svg>
@@ -148,7 +148,7 @@ export default function Home() {
               
               <div className="flex flex-col">
                 <dt className="flex items-center gap-x-3 text-base font-semibold leading-7 text-gray-900">
-                  <div className="h-10 w-10 flex items-center justify-center rounded-lg ci-bg-primary">
+                  <div className="h-10 w-10 flex items-center justify-center rounded-lg bg-blue-600">
                     <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
                     </svg>
@@ -165,7 +165,7 @@ export default function Home() {
               
               <div className="flex flex-col">
                 <dt className="flex items-center gap-x-3 text-base font-semibold leading-7 text-gray-900">
-                  <div className="h-10 w-10 flex items-center justify-center rounded-lg ci-bg-primary">
+                  <div className="h-10 w-10 flex items-center justify-center rounded-lg bg-blue-600">
                     <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
                     </svg>
@@ -208,7 +208,7 @@ export default function Home() {
                     </p>
                   </blockquote>
                   <figcaption className="mt-6 flex items-center gap-x-4">
-                    <div className="h-10 w-10 rounded-full ci-bg-primary flex items-center justify-center">
+                    <div className="h-10 w-10 rounded-full bg-blue-600 flex items-center justify-center">
                       <span className="text-white font-semibold">SK</span>
                     </div>
                     <div>
@@ -229,7 +229,7 @@ export default function Home() {
                     </p>
                   </blockquote>
                   <figcaption className="mt-6 flex items-center gap-x-4">
-                    <div className="h-10 w-10 rounded-full ci-bg-primary flex items-center justify-center">
+                    <div className="h-10 w-10 rounded-full bg-blue-600 flex items-center justify-center">
                       <span className="text-white font-semibold">MR</span>
                     </div>
                     <div>
@@ -250,7 +250,7 @@ export default function Home() {
                     </p>
                   </blockquote>
                   <figcaption className="mt-6 flex items-center gap-x-4">
-                    <div className="h-10 w-10 rounded-full ci-bg-primary flex items-center justify-center">
+                    <div className="h-10 w-10 rounded-full bg-blue-600 flex items-center justify-center">
                       <span className="text-white font-semibold">JC</span>
                     </div>
                     <div>
@@ -339,7 +339,7 @@ export default function Home() {
                   </p>
                   <Link
                     href="/waitlist"
-                    className="mt-10 block w-full rounded-md ci-bg-primary px-3 py-2 text-center text-sm font-semibold text-white shadow-sm hover:ci-bg-primary-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                    className="mt-10 block w-full rounded-md bg-blue-600 px-3 py-2 text-center text-sm font-semibold text-white shadow-sm hover:bg-blue-600-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
                   >
                     Join Waitlist
                   </Link>
@@ -422,7 +422,7 @@ export default function Home() {
       </section>
 
       {/* Final CTA Section */}
-      <section className="ci-bg-primary">
+      <section className="bg-blue-600">
         <div className="px-6 py-24 sm:px-6 sm:py-32 lg:px-8">
           <div className="mx-auto max-w-2xl text-center">
             <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">

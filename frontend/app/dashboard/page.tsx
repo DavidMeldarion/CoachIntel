@@ -393,7 +393,7 @@ function Dashboard() {
                 {session?.user?.plan === 'pro' ? (
                   <Link href="/upload">
                     <button
-                      className="px-4 py-2 rounded ci-bg-primary ci-text-white font-semibold transition hover:ci-bg-primary flex items-center"
+                      className="px-4 py-2 rounded bg-blue-600 text-white font-semibold transition hover:bg-blue-700 flex items-center"
                       aria-label="Upload Audio (Pro feature)"
                       title="Pro feature"
                     >
@@ -404,7 +404,7 @@ function Dashboard() {
                   </Link>
                 ) : (
                   <button
-                    className="px-4 py-2 rounded ci-bg-primary ci-text-white font-semibold transition hover:ci-bg-primary flex items-center opacity-90"
+                    className="px-4 py-2 rounded bg-blue-600 text-white font-semibold transition hover:bg-blue-700 flex items-center opacity-90"
                     aria-label="Upload Audio (Pro feature)"
                     title="Upgrade to Pro to upload audio"
                     onClick={() => {

@@ -112,7 +112,7 @@ export default function MeetingTranscriptPage() {
           {meeting.transcript?.full_text || "No transcript available."}
         </div>
       </div>
-  <button className="mt-6 px-4 py-2 ci-bg-primary ci-text-white rounded hover:ci-bg-primary" onClick={() => router.back()}>
+  <button className="mt-6 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700" onClick={() => router.back()}>
         Back to Timeline
       </button>
     </main>
