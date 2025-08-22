@@ -9,13 +9,13 @@ export default function Home() {
         <div className="mx-auto max-w-7xl">
           <div className="text-center">
             <h1 className="text-4xl font-bold tracking-tight text-gray-900 sm:text-6xl">
-              Transform your personal training practice with{" "}
-              <span className="text-blue-600">AI-powered session summaries</span> and client insights
+              CoachIntel gives you <span className="text-blue-600">client-aware AI meeting summaries</span>
             </h1>
             <p className="mt-6 text-lg leading-8 text-gray-600 max-w-3xl mx-auto">
-              Save hours every week with intelligent session transcriptions, automated client progress tracking, 
-              and actionable training insights. Transform scattered workout notes into organized, 
-              professional client management that drives results and keeps your clients motivated.
+              Unlike generic meeting transcription tools that only reflect the last session, CoachIntel remembers the
+              full history of every client. Get rich post‑meeting summaries and pre‑session briefs that reference
+              prior goals, milestones, obstacles, and commitments—so you arrive prepared and leave with next steps
+              already captured.
             </p>
             <div className="mt-10 flex items-center justify-center gap-x-6">
               <Link
@@ -93,7 +93,7 @@ export default function Home() {
               <span className="text-blue-600">CoachIntel</span> puts everything in its place
             </h3>
             <p className="mt-6 text-lg leading-8 text-gray-600">
-              Our AI automatically captures, organizes, and analyzes your training sessions, 
+              Our AI automatically organizes and analyzes your training sessions, 
               giving you more time to focus on what you do best - transforming your clients&apos; fitness journeys.
             </p>
           </div>
@@ -104,9 +104,9 @@ export default function Home() {
       <section id="features" className="py-24 bg-gray-50">
         <div className="mx-auto max-w-7xl px-6 lg:px-8">
           <div className="mx-auto max-w-2xl lg:text-center">
-            <h2 className="text-base font-semibold leading-7 text-blue-600">Core Features</h2>
+            <h2 className="text-base font-semibold leading-7 text-blue-600">Core Capabilities</h2>
             <p className="mt-2 text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl">
-              Everything you need to scale your personal training business
+              Historical intelligence for every client conversation
             </p>
           </div>
           
@@ -116,15 +116,16 @@ export default function Home() {
                 <dt className="flex items-center gap-x-3 text-base font-semibold leading-7 text-gray-900">
                   <div className="h-10 w-10 flex items-center justify-center rounded-lg bg-blue-600">
                     <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6.75m0 0c0 1.5-1.5 3-3 3m3-3c0 1.5 1.5 3 3 3M4.5 6A7.5 7.5 0 0112 13.5 7.5 7.5 0 0119.5 6" />
                     </svg>
                   </div>
-                  Automated Session Transcriptions
+                  Longitudinal Client Memory
                 </dt>
                 <dd className="mt-4 flex flex-auto flex-col text-base leading-7 text-gray-600">
                   <p className="flex-auto">
-                    Seamlessly integrate with your existing tools like Fireflies and Google Calendar. 
-                    Every training session is automatically transcribed and organized without any manual work.
+                    Summaries reference the entire relationship history: progress, setbacks, prior goals, and
+                    agreed action items—giving you continuity no single‑meeting tool can deliver. Pre‑meeting briefs
+                    surface what to revisit before you join.
                   </p>
                 </dd>
               </div>
@@ -170,7 +171,7 @@ export default function Home() {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244" />
                     </svg>
                   </div>
-                  Seamless Integrations
+                  Calendar & Workflow Alignment
                 </dt>
                 <dd className="mt-4 flex flex-auto flex-col text-base leading-7 text-gray-600">
                   <p className="flex-auto">
@@ -184,86 +185,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Social Proof Section */}
-      <section className="py-24 bg-white">
-        <div className="mx-auto max-w-7xl px-6 lg:px-8">
-          <div className="mx-auto max-w-2xl lg:text-center">
-            <h2 className="text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl">
-              Trusted by personal trainers and fitness coaches
-            </h2>
-            <p className="mt-6 text-lg leading-8 text-gray-600">
-              See what early adopters are saying about CoachIntel
-            </p>
-          </div>
-          
-          <div className="mx-auto mt-16 flow-root max-w-2xl sm:mt-20 lg:mx-0 lg:max-w-none">
-            <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="rounded-2xl bg-gray-50 p-8">
-                <figure>
-                  <blockquote className="text-gray-900">
-                    <p>
-                      &quot;CoachIntel has transformed how I manage my client relationships. 
-                      I save 3-4 hours per week on admin work and my clients love the 
-                      detailed session summaries and progress tracking I can now provide.&quot;
-                    </p>
-                  </blockquote>
-                  <figcaption className="mt-6 flex items-center gap-x-4">
-                    <div className="h-10 w-10 rounded-full bg-blue-600 flex items-center justify-center">
-                      <span className="text-white font-semibold">SK</span>
-                    </div>
-                    <div>
-                      <div className="font-semibold">Sarah Kim</div>
-                      <div className="text-gray-600">Personal Trainer, 8+ years</div>
-                    </div>
-                  </figcaption>
-                </figure>
-              </div>
-              
-              <div className="rounded-2xl bg-gray-50 p-8">
-                <figure>
-                  <blockquote className="text-gray-900">
-                    <p>
-                      &quot;The AI insights are incredibly accurate. It picks up on training patterns 
-                      I sometimes miss and suggests workout modifications that have led to 
-                      amazing results with my clients.&quot;
-                    </p>
-                  </blockquote>
-                  <figcaption className="mt-6 flex items-center gap-x-4">
-                    <div className="h-10 w-10 rounded-full bg-blue-600 flex items-center justify-center">
-                      <span className="text-white font-semibold">MR</span>
-                    </div>
-                    <div>
-                      <div className="font-semibold">Michael Rodriguez</div>
-                      <div className="text-gray-600">Fitness Coach, 12+ years</div>
-                    </div>
-                  </figcaption>
-                </figure>
-              </div>
-              
-              <div className="rounded-2xl bg-gray-50 p-8">
-                <figure>
-                  <blockquote className="text-gray-900">
-                    <p>
-                      &quot;Setup was incredibly easy - connected my existing tools in minutes. 
-                      Now every training session is automatically organized and I never miss 
-                      important client milestones or follow-ups.&quot;
-                    </p>
-                  </blockquote>
-                  <figcaption className="mt-6 flex items-center gap-x-4">
-                    <div className="h-10 w-10 rounded-full bg-blue-600 flex items-center justify-center">
-                      <span className="text-white font-semibold">JC</span>
-                    </div>
-                    <div>
-                      <div className="font-semibold">Jennifer Chen</div>
-                      <div className="text-gray-600">Strength Coach, 6+ years</div>
-                    </div>
-                  </figcaption>
-                </figure>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+  {/* Social Proof Section removed until real testimonials are available */}
 
       {/* Pricing Section */}
       <section className="py-24 bg-gray-50">
@@ -292,7 +214,7 @@ export default function Home() {
                   <svg className="h-6 w-5 flex-none text-blue-600" viewBox="0 0 20 20" fill="currentColor">
                     <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
                   </svg>
-                  Unlimited session transcriptions
+                  Unlimited historical summaries
                 </li>
                 <li className="flex gap-x-3">
                   <svg className="h-6 w-5 flex-none text-blue-600" viewBox="0 0 20 20" fill="currentColor">
@@ -365,23 +287,12 @@ export default function Home() {
           <div className="mx-auto mt-16 max-w-2xl divide-y divide-gray-100">
             <div className="py-6">
               <dt className="text-base font-semibold leading-7 text-gray-900">
-                How complex is the integration setup?
+                How complex is the setup?
               </dt>
               <dd className="mt-2 text-base leading-7 text-gray-600">
-                Extremely simple. Most coaches are up and running in under 5 minutes. We provide 
-                one-click integrations with popular tools like Fireflies, Google Calendar, and Zoom. 
-                Our setup wizard guides you through each step.
-              </dd>
-            </div>
-            
-            <div className="py-6">
-              <dt className="text-base font-semibold leading-7 text-gray-900">
-                How secure is my client data?
-              </dt>
-              <dd className="mt-2 text-base leading-7 text-gray-600">
-                Security is our top priority. All data is encrypted in transit and at rest, and 
-                we never share or sell your data. You maintain full ownership and control of all 
-                client information with regular security updates and monitoring.
+                Very lightweight. Connect your calendar and start generating summaries immediately. Deeper
+                integrations and automated capture are coming, but we focus on delivering valuable historical
+                context first rather than a flashy wizard.
               </dd>
             </div>
             
@@ -390,9 +301,9 @@ export default function Home() {
                 What if I need to export my data?
               </dt>
               <dd className="mt-2 text-base leading-7 text-gray-600">
-                You own your data completely. Export everything at any time in standard formats 
-                (PDF, CSV, JSON). There are no lock-in periods or export fees - your data remains 
-                yours forever.
+                You own your data completely. During the early access period, just email us and we&apos;ll prepare an
+                export (standard formats like CSV / JSON). Self‑serve exports will arrive later—there are no lock‑ins
+                or fees.
               </dd>
             </div>
             
