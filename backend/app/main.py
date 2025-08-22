@@ -39,6 +39,12 @@ from .config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_TOKEN_URL, GO
 
 # Import leads router
 from app.routers.leads import router as leads_router
+from app.routers.webhooks import router as webhooks_router
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.repositories.meeting_tracking import list_review_candidates, resolve_review_candidate
+from uuid import UUID as _UUID
+from app.services.oauth import build_auth_url, exchange_code, OAuthError
+from app.utils.crypto import fernet
 
 # Frontend URL configuration with both www and non-www variants
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
@@ -384,9 +390,61 @@ async def create_public_lead(payload: LeadPublicIn, request: Request):
 
 # Include leads router
 app.include_router(leads_router)
+app.include_router(webhooks_router)
+
+# --------------------------------------------------
+# Review candidate API (minimal, auth TODO)
+# --------------------------------------------------
+class ReviewResolveIn(BaseModel):
+    survivor_id: str | None = None
+    mergee_id: str | None = None
+    dismiss: bool = False
+
+
+@app.get("/review/candidates")
+async def list_candidates(coach_id: int, limit: int = 100):  # TODO auth & coach resolution
+    async with AsyncSessionLocal() as session:  # reuse existing async engine factory
+        rows = await list_review_candidates(session, coach_id=coach_id, limit=limit)
+        return [
+            {
+                'id': str(r.id),
+                'coach_id': r.coach_id,
+                'person_a_id': str(r.person_a_id),
+                'person_b_id': str(r.person_b_id),
+                'meeting_id': str(r.meeting_id) if r.meeting_id else None,
+                'reason': r.reason,
+                'resolved': r.resolved,
+                'created_at': r.created_at.isoformat() if r.created_at else None,
+            } for r in rows
+        ]
+
+
+@app.post("/review/candidates/{candidate_id}/resolve")
+async def resolve_candidate(candidate_id: str, payload: ReviewResolveIn):  # TODO auth
+    async with AsyncSessionLocal() as session:
+        survivor = payload.survivor_id and _UUID(payload.survivor_id)
+        mergee = payload.mergee_id and _UUID(payload.mergee_id)
+        cand, merged_person = await resolve_review_candidate(
+            session,
+            candidate_id=_UUID(candidate_id),
+            survivor_id=survivor,
+            mergee_id=mergee,
+            dismiss=payload.dismiss,
+        )
+        await session.commit()
+        return {
+            'candidate': {
+                'id': str(cand.id), 'resolved': cand.resolved,
+                'person_a_id': str(cand.person_a_id), 'person_b_id': str(cand.person_b_id)
+            },
+            'survivor': (str(merged_person.id) if merged_person else None),
+        }
 
 # JWT/session verification dependency
 async def verify_jwt_user(request: Request):
+    # JWT/session verification dependency (placed before OAuth routes)
+
+
     cookie_header = request.headers.get("cookie", "")
     print(f"[Backend] verify_jwt_user - cookie_header: {cookie_header}")
     
@@ -442,6 +500,9 @@ async def verify_jwt_user(request: Request):
     
     # Dev-friendly fallback: allow trusted header-based auth in non-production
     if not os.getenv("RAILWAY_ENVIRONMENT"):
+    # Dev-friendly fallback: allow trusted header-based auth in non-production
+
+
         email_header = request.headers.get("x-user-email", "")
         auth_header = request.headers.get("authorization", "")
         email = email_header or (auth_header.split("Bearer ")[1] if auth_header.startswith("Bearer ") else None)
@@ -452,6 +513,80 @@ async def verify_jwt_user(request: Request):
                 return user
     print("[Backend] verify_jwt_user - No token found, raising 401")
     raise HTTPException(status_code=401, detail="Not authenticated")
+
+# --------------------------------------------------
+# OAuth endpoints (defined after verify_jwt_user to avoid forward ref issues)
+# --------------------------------------------------
+EXPECTED_SCOPES = {
+    'google': {"https://www.googleapis.com/auth/calendar.readonly", "openid", "email", "profile"},
+    'zoom': {"meeting:read", "user:read"},
+    'calendly': {"default"},
+    'fireflies': {"meetings.read"},
+}
+
+@app.get("/oauth/{provider}/start")
+async def oauth_start(provider: str, user: User = Depends(verify_jwt_user)):
+    try:
+        url = build_auth_url(provider, user.id)
+        return RedirectResponse(url)
+    except OAuthError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class OAuthCallbackOut(BaseModel):
+    provider: str
+    linked: bool
+    account_id: str | None = None
+
+
+@app.get("/oauth/{provider}/callback", response_model=OAuthCallbackOut)
+async def oauth_callback(provider: str, code: str | None = None, state: str | None = None, error: str | None = None, user: User = Depends(verify_jwt_user)):
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing code")
+    try:
+        token_data = exchange_code(provider, code)
+    except OAuthError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    scopes_returned = set(token_data.get('scopes') or [])
+    expected = EXPECTED_SCOPES.get(provider.lower())
+    if expected and not expected.issubset(scopes_returned):
+        missing = sorted(expected - scopes_returned)
+        raise HTTPException(status_code=400, detail=f"Missing required scopes: {', '.join(missing)}")
+    from app.models_meeting_tracking import ExternalAccount
+    async with AsyncSessionLocal() as session:
+        f = fernet()
+        access_enc = f.encrypt(token_data['access_token'].encode()).decode()
+        refresh_enc = token_data.get('refresh_token') and f.encrypt(token_data['refresh_token'].encode()).decode()
+        import datetime, sqlalchemy as sa
+        exp_dt = datetime.datetime.utcfromtimestamp(token_data['expires_at']).replace(tzinfo=datetime.timezone.utc)
+        stmt = sa.select(ExternalAccount).where(ExternalAccount.coach_id == user.id, ExternalAccount.provider == provider)
+        existing = (await session.execute(stmt)).scalar_one_or_none()
+        if existing:
+            existing.access_token_enc = access_enc
+            if refresh_enc:
+                existing.refresh_token_enc = refresh_enc
+            existing.scopes = list(scopes_returned)
+            existing.external_user_id = token_data.get('external_user_id') or existing.external_user_id
+            existing.expires_at = exp_dt
+            account_id = existing.id
+        else:
+            from uuid import uuid4
+            acc = ExternalAccount(
+                id=uuid4(),
+                coach_id=user.id,
+                provider=provider,
+                access_token_enc=access_enc,
+                refresh_token_enc=refresh_enc,
+                scopes=list(scopes_returned),
+                external_user_id=token_data.get('external_user_id'),
+                expires_at=exp_dt,
+            )
+            session.add(acc)
+            account_id = acc.id
+        await session.commit()
+    return OAuthCallbackOut(provider=provider, linked=True, account_id=str(account_id))
 
 @app.get("/")
 def root():
@@ -583,27 +718,7 @@ async def redeem_invite(body: InviteRedeemIn):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid invite: {e}")
 
-# Secure endpoints
-# @app.post("/upload-audio/")
-# async def upload_audio(file: UploadFile = File(...), user: User = Depends(verify_jwt_user)):
-#     # Dummy: Save file, trigger transcription job
-#     return {"filename": file.filename, "status": "received"}
-
-# @app.get("/sessions/")
-# async def get_sessions(user: User = Depends(verify_jwt_user)):
-#     # Dummy: Return list of sessions
-#     return [{"id": 1, "summary": "Session 1 summary"}]
-
-# @app.post("/transcribe/")
-# async def transcribe(user: User = Depends(verify_jwt_user)):
-#     # Dummy: Trigger transcription
-#     return {"status": "transcription started"}
-
-# @app.post("/summarize/")
-# async def summarize(user: User = Depends(verify_jwt_user)):
-#     # Dummy: Trigger summarization
-#     return {"status": "summarization started"}
-
+    # (Removed misplaced EXPECTED_SCOPES block)
 @app.get("/external-meetings/{source}/{meeting_id}")
 async def get_meeting_details(
     source: str,

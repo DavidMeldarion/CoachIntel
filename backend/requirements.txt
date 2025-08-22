@@ -21,5 +21,6 @@ postmarker
 bcrypt
 passlib[bcrypt]
 pydantic[email]
+pydantic-settings
 # optional SMS provider
 # twilio

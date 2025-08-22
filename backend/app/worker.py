@@ -3,13 +3,24 @@ import httpx
 import datetime
 import os
 import ssl
+import asyncio
+from collections import defaultdict
+from typing import Optional, List, Dict, Set
+from urllib.parse import urlparse
+import itertools
 from celery import Celery
 from celery.schedules import crontab
-from app.models import User, Meeting, Transcript, SessionLocal  # Use sync session
+from sqlalchemy import or_, cast, Text, select
+
+from app.models import User, Meeting, Transcript, SessionLocal, AsyncSessionLocal  # Use sync + async sessions
 from app.integrations import fetch_fireflies_meetings_sync
 from app.summarization import summarize_meeting
 from app.config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_TOKEN_URL
-from sqlalchemy import or_, cast, Text
+import json
+from app.services.oauth import refresh_if_needed, OAuthError
+from app.utils.crypto import fernet
+from app.models_meeting_tracking import ExternalAccount, Meeting as MTMeeting
+from app.services.calendar_sync import list_events, upsert_events_as_meetings
 
 # Prefer a full Redis URL from env (e.g., Upstash rediss://...)
 ENV_REDIS_URL = os.getenv("REDIS_URL") or os.getenv("UPSTASH_REDIS_URL")
@@ -91,9 +102,19 @@ celery_app.conf.beat_schedule = {
         'schedule': crontab(minute=0, hour='*'),
         'args': ()
     },
+    'reconcile-meetings-nightly': {
+        'task': 'worker.reconcile_meetings',
+        'schedule': crontab(minute=0, hour='3'),  # 3am UTC nightly
+        'args': ()
+    },
     'refresh-google-tokens-every-10-minutes': {
         'task': 'worker.refresh_all_google_tokens',
         'schedule': crontab(minute='*/10'),
+        'args': ()
+    },
+    'refresh-oauth-external-accounts-5m': {
+        'task': 'worker.refresh_external_accounts',
+        'schedule': crontab(minute='*/5'),
         'args': ()
     },
     # 'summarize-missing-transcripts-every-15-minutes': {
@@ -102,6 +123,330 @@ celery_app.conf.beat_schedule = {
     #     'args': ()
     # },
 }
+
+# -------------------------------------------------
+# Webhook ingestion task stubs (idempotent wrappers)
+# -------------------------------------------------
+@celery_app.task(name="calendly_ingest")
+def calendly_ingest(payload: dict):  # type: ignore[override]
+    """Stub Calendly ingestion.
+
+    TODO: Map invitee -> Meeting / Person enrichment.
+    Keep lightweight & idempotent (log only for now).
+    """
+    try:
+        logging.info("[CalendlyIngest] payload=%s", json.dumps(payload))
+    except Exception:
+        logging.info("[CalendlyIngest] payload (raw repr)=%r", payload)
+    return {"status": "ok"}
+
+@celery_app.task(name="zoom_ingest")
+def zoom_ingest(payload: dict):  # type: ignore[override]
+    try:
+        logging.info("[ZoomIngest] payload=%s", json.dumps(payload))
+    except Exception:
+        logging.info("[ZoomIngest] payload (raw repr)=%r", payload)
+    return {"status": "ok"}
+
+@celery_app.task(name="fireflies_ingest")
+def fireflies_ingest(payload: dict):  # type: ignore[override]
+    try:
+        logging.info("[FirefliesIngest] payload=%s", json.dumps(payload))
+    except Exception:
+        logging.info("[FirefliesIngest] payload (raw repr)=%r", payload)
+    return {"status": "ok"}
+
+
+# -------------------------------------------------
+# Calendar & meeting sync / reconciliation tasks
+# -------------------------------------------------
+
+def _parse_iso_utc(s: Optional[str]) -> datetime.datetime:
+    if not s:
+        return datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+    try:
+        if s.endswith('Z'):
+            s = s[:-1] + '+00:00'
+        dt = datetime.datetime.fromisoformat(s)
+        if dt.tzinfo:
+            dt = dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+        return dt
+    except Exception:
+        return datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+
+
+@celery_app.task
+def sync_google_calendar(coach_id: int, since_iso: Optional[str] = None):
+    """Ingest Google Calendar events for a coach since given ISO timestamp.
+
+    Strategy:
+      - Default window: since (or 24h back) -> now + 7d (future events helpful for prep).
+      - Uses async session + existing list_events/upsert pipeline.
+      - Returns counts for observability.
+    """
+    async def _run() -> dict:
+        start = _parse_iso_utc(since_iso)
+        now = datetime.datetime.utcnow()
+        future = now + datetime.timedelta(days=7)
+        async with AsyncSessionLocal() as session:  # type: ignore
+            try:
+                events = await list_events(session, coach_id, 'google', start, future)
+                inserted = await upsert_events_as_meetings(session, coach_id, 'google', events)
+                await session.commit()
+                return {"events": len(events), "upserted": inserted}
+            except Exception as e:  # pragma: no cover
+                await session.rollback()
+                logging.error("[sync_google_calendar] coach=%s error=%s", coach_id, e)
+                return {"error": str(e)}
+    return asyncio.run(_run())
+
+
+@celery_app.task
+def sync_zoom_reports(coach_id: int, window_hours: int = 24):
+    """Placeholder Zoom reports ingestion.
+
+    TODO: Implement actual Zoom API calls (meetings, participants) once OAuth scope + endpoint solidified.
+    For now, logs intent & returns stub structure for visibility.
+    """
+    logging.info("[sync_zoom_reports] coach=%s window_hours=%s (NOT IMPLEMENTED)", coach_id, window_hours)
+    # Future implementation sketch (async like google):
+    #  - list past meetings via Zoom API /report/meetings or /users/me/meetings
+    #  - upsert by zoom_meeting_id into external_refs
+    #  - attach attendees similar to calendar attendees
+    return {"status": "not_implemented"}
+
+
+@celery_app.task
+def reconcile_meetings(coach_id: Optional[int] = None, lookback_hours: int = 168, proximity_minutes: int = 5):
+    """Reconcile meetings across providers using multi-tier priority rules.
+
+    Priority link rules (applied in order building an undirected graph; components are merged):
+      1) Exact iCalUID match (ical_uid field).
+      2) Cross-provider meeting IDs: any identical value appearing in external_refs.zoom_meeting_id OR
+         external_refs.fireflies_meeting_id (value equality links regardless of key origin).
+      3) Fallback: started_at within ±proximity_minutes AND match on join_url domain (coach-scoped).
+
+    Merge behavior:
+      - Keeper chosen as earliest started_at (else arbitrary stable ordering).
+      - external_refs union (preserve existing keys; add new keys from others).
+      - Populate missing core fields (topic/platform/join_url/timestamps) from others if empty.
+      - Attendees: union across all meetings; new attendees added to keeper.
+      - Identity resolution re-run for any keeper attendees lacking person_id.
+      - Non-keeper meetings deleted (cascade removes their attendees once migrated).
+    """
+    async def _run() -> dict:
+        since = datetime.datetime.utcnow() - datetime.timedelta(hours=lookback_hours)
+        merged_components = 0
+        merged_meetings = 0
+        scanned = 0
+        async with AsyncSessionLocal() as session:  # type: ignore
+            from app.models_meeting_tracking import MeetingAttendee  # local import to avoid cycles
+            from app.repositories.meeting_tracking import add_or_update_attendee, resolve_attendee
+            try:
+                stmt = select(MTMeeting).where(MTMeeting.started_at >= since)
+                if coach_id:
+                    stmt = stmt.where(MTMeeting.coach_id == coach_id)
+                meetings: List[MTMeeting] = (await session.execute(stmt)).scalars().all()
+                scanned = len(meetings)
+                if not meetings:
+                    return {"scanned": 0, "merged_meetings": 0, "merged_components": 0}
+
+                # Build adjacency graph
+                adj: Dict[str, Set[str]] = defaultdict(set)
+                def link(a: MTMeeting, b: MTMeeting):
+                    if a.id == b.id:
+                        return
+                    adj[str(a.id)].add(str(b.id))
+                    adj[str(b.id)].add(str(a.id))
+
+                # 1) iCalUID exact
+                ical_groups: Dict[str, List[MTMeeting]] = defaultdict(list)
+                for m in meetings:
+                    if m.ical_uid:
+                        ical_groups[m.ical_uid].append(m)
+                for g in ical_groups.values():
+                    if len(g) > 1:
+                        for a, b in itertools.combinations(g, 2):
+                            link(a, b)
+
+                # 2) Cross-provider meeting IDs (zoom_meeting_id / fireflies_meeting_id)
+                id_map: Dict[str, List[MTMeeting]] = defaultdict(list)
+                for m in meetings:
+                    refs = m.external_refs or {}
+                    for key in ("zoom_meeting_id", "fireflies_meeting_id"):
+                        val = refs.get(key)
+                        if val:
+                            id_map[str(val)].append(m)
+                for g in id_map.values():
+                    if len(g) > 1:
+                        for a, b in itertools.combinations(g, 2):
+                            link(a, b)
+
+                # 3) Fallback proximity + join_url domain
+                domain_groups: Dict[tuple, List[MTMeeting]] = defaultdict(list)
+                for m in meetings:
+                    if not m.join_url or not m.started_at:
+                        continue
+                    try:
+                        domain = urlparse(m.join_url).netloc.lower()
+                    except Exception:
+                        continue
+                    if not domain:
+                        continue
+                    domain_groups[(m.coach_id, domain)].append(m)
+                for (_coach, _domain), group in domain_groups.items():
+                    group.sort(key=lambda x: x.started_at or datetime.datetime.min.replace(tzinfo=None))
+                    for i, m in enumerate(group):
+                        for j in range(i + 1, len(group)):
+                            n = group[j]
+                            if not (m.started_at and n.started_at):
+                                continue
+                            delta_min = abs((m.started_at - n.started_at).total_seconds()) / 60.0
+                            if delta_min <= proximity_minutes:
+                                link(m, n)
+                            elif (n.started_at - m.started_at).total_seconds() / 60.0 > proximity_minutes:
+                                # further items will only be later; break optimization
+                                break
+
+                # Connected components (DFS)
+                visited: Set[str] = set()
+                components: List[List[MTMeeting]] = []
+                meeting_by_id = {str(m.id): m for m in meetings}
+                for mid in meeting_by_id.keys():
+                    if mid in visited:
+                        continue
+                    stack = [mid]
+                    comp_ids: List[str] = []
+                    while stack:
+                        cur = stack.pop()
+                        if cur in visited:
+                            continue
+                        visited.add(cur)
+                        comp_ids.append(cur)
+                        for nxt in adj.get(cur, []):
+                            if nxt not in visited:
+                                stack.append(nxt)
+                    if len(comp_ids) > 1:
+                        components.append([meeting_by_id[cid] for cid in comp_ids])
+
+                # Merge each component
+                for comp in components:
+                    comp.sort(key=lambda x: (x.started_at or datetime.datetime.max, str(x.id)))
+                    keeper = comp[0]
+                    others = comp[1:]
+                    changed = False
+                    for other in others:
+                        # Union external refs
+                        krefs = dict(keeper.external_refs or {})
+                        for k, v in (other.external_refs or {}).items():
+                            if k not in krefs:
+                                krefs[k] = v
+                                changed = True
+                        keeper.external_refs = krefs
+                        # Fill blank attributes
+                        for attr in ("topic", "platform", "join_url"):
+                            if not getattr(keeper, attr) and getattr(other, attr):
+                                setattr(keeper, attr, getattr(other, attr))
+                                changed = True
+                        if (not keeper.started_at or (other.started_at and other.started_at < keeper.started_at)):
+                            keeper.started_at = other.started_at
+                            changed = True
+                        if (not keeper.ended_at or (other.ended_at and (not keeper.ended_at or other.ended_at > keeper.ended_at))):
+                            keeper.ended_at = other.ended_at
+                            changed = True
+                        # Migrate attendees
+                        o_attendees = (await session.execute(select(MeetingAttendee).where(MeetingAttendee.meeting_id == other.id))).scalars().all()
+                        for att in o_attendees:
+                            ident = att.external_attendee_id or att.raw_email or att.raw_name
+                            # Check if exists in keeper
+                            existing = (await session.execute(select(MeetingAttendee).where(
+                                MeetingAttendee.meeting_id == keeper.id,
+                                MeetingAttendee.source == att.source
+                            ))).scalars().all()
+                            found = False
+                            for ex in existing:
+                                ex_ident = ex.external_attendee_id or ex.raw_email or ex.raw_name
+                                if ex_ident == ident:
+                                    found = True
+                                    break
+                            if not found:
+                                await add_or_update_attendee(
+                                    session,
+                                    meeting_id=keeper.id,
+                                    source=att.source,
+                                    external_attendee_id=att.external_attendee_id,
+                                    raw_email=att.raw_email,
+                                    raw_phone=att.raw_phone,
+                                    raw_name=att.raw_name,
+                                    role=att.role,
+                                )
+                                changed = True
+                        await session.delete(other)
+                        merged_meetings += 1
+                    # Identity resolution for attendees lacking person_id
+                    unresolved = (await session.execute(select(MeetingAttendee).where(
+                        MeetingAttendee.meeting_id == keeper.id,
+                        MeetingAttendee.person_id == None  # noqa: E711
+                    ))).scalars().all()
+                    for att in unresolved:
+                        try:
+                            await resolve_attendee(session, keeper.coach_id, att)
+                        except Exception:  # pragma: no cover
+                            pass
+                    if changed:
+                        await session.flush()
+                    merged_components += 1
+
+                if merged_meetings:
+                    await session.commit()
+                return {
+                    "scanned": scanned,
+                    "merged_components": merged_components,
+                    "merged_meetings": merged_meetings,
+                }
+            except Exception as e:  # pragma: no cover
+                await session.rollback()
+                logging.error("[reconcile_meetings] error=%s", e)
+                return {"error": str(e), "scanned": scanned, "merged_components": merged_components, "merged_meetings": merged_meetings}
+    return asyncio.run(_run())
+
+
+@celery_app.task
+def refresh_external_accounts():
+    """Periodic refresh of expiring ExternalAccount tokens (providers supporting refresh)."""
+    session = SessionLocal()
+    try:
+        now = datetime.datetime.utcnow().timestamp()
+        accounts = session.query(ExternalAccount).filter(ExternalAccount.refresh_token_enc.isnot(None)).all()
+        f = fernet()
+        refreshed = 0
+        for acc in accounts:
+            if not acc.expires_at:
+                continue
+            expires_at_epoch = acc.expires_at.timestamp()
+            if expires_at_epoch - now > 600:  # skip if >10m remaining
+                continue
+            try:
+                refresh_token_plain = f.decrypt(acc.refresh_token_enc.encode()).decode()
+                upd = refresh_if_needed(acc.provider, refresh_token_plain, int(expires_at_epoch))
+                if upd:
+                    acc.access_token_enc = f.encrypt(upd['access_token'].encode()).decode()
+                    if upd.get('refresh_token') and upd['refresh_token'] != refresh_token_plain:
+                        acc.refresh_token_enc = f.encrypt(upd['refresh_token'].encode()).decode()
+                    import datetime as dt
+                    acc.expires_at = dt.datetime.utcfromtimestamp(upd['expires_at']).replace(tzinfo=dt.timezone.utc)
+                    if upd.get('scopes'):
+                        acc.scopes = upd['scopes']
+                    session.add(acc)
+                    refreshed += 1
+            except OAuthError as e:
+                logging.warning("[OAuthRefresh] provider=%s account=%s failed: %s", acc.provider, acc.id, e)
+            except Exception as e:  # pragma: no cover
+                logging.error("[OAuthRefresh] unexpected error: %s", e)
+        session.commit()
+        return {"refreshed": refreshed}
+    finally:
+        session.close()
 
 @celery_app.task
 def summarize_missing_transcripts():

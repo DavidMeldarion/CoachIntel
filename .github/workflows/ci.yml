@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [ development, main ]
+  pull_request:
+    branches: [ development, main ]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        ports: ["5432:5432"]
+        env:
+            POSTGRES_PASSWORD: postgres
+            POSTGRES_USER: postgres
+            POSTGRES_DB: coachintel_test
+        options: >-
+          --health-cmd "pg_isready -U postgres" \
+          --health-interval 10s \
+          --health-timeout 5s \
+          --health-retries 5
+    env:
+      TEST_DB_HOST: localhost
+      TEST_DB_PORT: 5432
+      TEST_DB_USER: postgres
+      TEST_DB_PASSWORD: postgres
+      TEST_DB_NAME: coachintel_test
+      FERNET_KEY: gAAAAABk3fFakeKeyFakeKeyFakeKeyFakeKeyFakeKeyFake=
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y build-essential libpq-dev
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Wait for Postgres
+        run: |
+          for i in {1..20}; do
+            pg_isready -h localhost -p 5432 -U postgres && break
+            sleep 2
+          done
+
+      - name: Prepare DB (extensions)
+        run: |
+          psql postgresql://postgres:postgres@localhost:5432/coachintel_test -c "CREATE EXTENSION IF NOT EXISTS citext;"
+          psql postgresql://postgres:postgres@localhost:5432/coachintel_test -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+          psql postgresql://postgres:postgres@localhost:5432/coachintel_test -c "CREATE EXTENSION IF NOT EXISTS uuid-ossp;"
+          psql postgresql://postgres:postgres@localhost:5432/coachintel_test -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+
+      - name: Run Alembic migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/coachintel_test
+        run: |
+          alembic upgrade head
+
+      - name: Run tests
+        working-directory: backend
+        env:
+          TEST_DB_HOST: localhost
+          TEST_DB_PORT: 5432
+          TEST_DB_USER: postgres
+          TEST_DB_PASSWORD: postgres
+          TEST_DB_NAME: coachintel_test
+          FERNET_KEY: gAAAAABk3fFakeKeyFakeKeyFakeKeyFakeKeyFakeKeyFake=
+        run: |
+          pytest -q
