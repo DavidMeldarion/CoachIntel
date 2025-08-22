@@ -3,10 +3,9 @@ import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 
 // Proxy a lead fetch (placeholder: consider calling backend origin directly instead of chaining through /api/leads)
-export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const { id } = await context.params
-    const res = await fetch(`/api/leads/${encodeURIComponent(id)}`, {
+    const res = await fetch(`/api/leads/${encodeURIComponent(params.id)}`, {
       cache: 'no-store',
       headers: { cookie: request.headers.get('cookie') || '' },
     })
