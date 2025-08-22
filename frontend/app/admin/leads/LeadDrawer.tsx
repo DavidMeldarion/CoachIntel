@@ -12,7 +12,7 @@ export default function LeadDrawer({ id, onClose }: { id: string; onClose: ()=>v
   useEffect(()=>{
     let mounted = true
     ;(async()=>{
-      const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+      const apiBase = process.env.NEXT_PUBLIC_API_URL;
       const res = await fetch(`${apiBase}/leads/${encodeURIComponent(id)}`, { credentials: 'include' })
       if (res.ok) {
         const d: LeadDetailOut = await res.json()
@@ -51,7 +51,7 @@ export default function LeadDrawer({ id, onClose }: { id: string; onClose: ()=>v
   async function generateInviteAndCopy() {
     if (!detail?.email) return;
     try {
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+  const apiBase = process.env.NEXT_PUBLIC_API_URL;
   const resp = await fetch(`${apiBase}/invites`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

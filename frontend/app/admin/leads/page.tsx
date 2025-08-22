@@ -65,7 +65,7 @@ export default function AdminLeadsPage() {
 
   async function inviteLead(email: string, id: string) {
     try {
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE;
+  const apiBase = process.env.NEXT_PUBLIC_API_URL;
   const resp = await fetch(`${apiBase}/invites`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
