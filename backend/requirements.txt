@@ -27,5 +27,6 @@ pytest-asyncio
 httpx
 anyio
 respx
+structlog
 # optional SMS provider
 # twilio

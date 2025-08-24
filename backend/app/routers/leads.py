@@ -1,5 +1,5 @@
 from __future__ import annotations
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select, or_, func, and_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
@@ -7,6 +7,7 @@ from datetime import datetime, date
 from typing import Optional, List
 
 from app.models import AsyncSessionLocal, Lead, Consent, MessageEvent, User
+from app.deps import get_current_user
 from app.models import (
     LeadListItemOut,
     LeadDetailOut,
@@ -21,13 +22,7 @@ router = APIRouter(prefix="/leads", tags=["leads"])
 
 ALLOWED_LEAD_STATUS = {"waitlist", "invited", "converted", "lost"}
 
-# Deferred auth dependency to avoid circular import
-async def current_user(request: Request) -> User:
-    from app.main import verify_jwt_user  # local import to break cycle
-    return await verify_jwt_user(request)
-
-# Only site admins may access public leads
-async def site_admin_only(user: User = Depends(current_user)) -> User:
+def site_admin_only(user: User = Depends(get_current_user)) -> User:
     if not getattr(user, 'site_admin', False):
         raise HTTPException(status_code=403, detail="Forbidden: site admin only")
     return user

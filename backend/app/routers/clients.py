@@ -8,13 +8,8 @@ from sqlalchemy import select, func, text
 from sqlalchemy.orm import selectinload
 
 from app.models import AsyncSessionLocal, User
+from app.deps import get_current_user, coach_scope  # shared auth dependencies
 from app.models_meeting_tracking import Client, Meeting as MTMeeting, MeetingAttendee, ClientStatusAudit
-# Avoid circular import: import verify_jwt_user inside dependency function
-from fastapi import Request
-
-async def _current_user(request: Request) -> User:
-    from app.main import verify_jwt_user  # local import to break cycle
-    return await verify_jwt_user(request)
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -67,7 +62,7 @@ async def list_clients(
     q: Optional[str] = Query(None, description="Email or name fragment"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user: User = Depends(_current_user),
+        user: User = Depends(get_current_user),
 ):
     coach_id = user.id
     async with AsyncSessionLocal() as session:  # type: ignore
@@ -123,7 +118,7 @@ async def client_timeline(
     client_id: UUID_t,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    user: User = Depends(_current_user),
+        user: User = Depends(get_current_user),
 ):
     coach_id = user.id
     async with AsyncSessionLocal() as session:  # type: ignore
@@ -166,20 +161,11 @@ async def client_timeline(
         return TimelineResponse(items=items, total=total, limit=limit, offset=offset)
 
 
-class ClientStatusChangeIn(BaseModel):
-    status: str
-    reason: Optional[str] = None
-
-class ClientStatusChangeOut(BaseModel):
-    id: UUID_t
-    old_status: Optional[str]
-    new_status: str
-
 @router.post("/{client_id}/status", response_model=ClientStatusChangeOut)
 async def change_client_status(
     client_id: UUID_t,
     body: ClientStatusChangeIn,
-    user: User = Depends(_current_user),
+        user: User = Depends(get_current_user),
 ):
     coach_id = user.id
     async with AsyncSessionLocal() as session:  # type: ignore

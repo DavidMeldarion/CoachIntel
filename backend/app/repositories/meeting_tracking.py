@@ -21,6 +21,30 @@ from app.models_meeting_tracking import (
     Person, Client, Meeting, MeetingAttendee, ReviewCandidate
 )
 from app.utils.crypto import hash_email, hash_phone, e164
+# Local lightweight logging helpers to avoid circular import on app.main
+import structlog
+
+def _set_coach_context(coach_id: int | None):  # binds coach_id into structlog contextvars if configured
+    try:
+        structlog.contextvars.bind_contextvars(coach_id=coach_id)
+    except Exception:  # pragma: no cover - missing structlog contextvars processor
+        pass
+
+def _log_meeting_upserted(meeting_id: str, coach_id: int, source: str, created: bool, **extra):
+    try:
+        structlog.get_logger().info(
+            "meeting_upserted", meeting_id=meeting_id, coach_id=coach_id, source=source, created=created, **extra
+        )
+    except Exception:  # pragma: no cover
+        pass
+
+def _log_attendee_resolved(raw_email: str | None, person_id: str | None, matched: bool, **extra):
+    try:
+        structlog.get_logger().info(
+            "attendee_resolved", raw_email=raw_email, person_id=person_id, matched=matched, **extra
+        )
+    except Exception:  # pragma: no cover
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +291,7 @@ async def resolve_attendee(session: AsyncSession, coach_id: int, attendee: Meeti
 
     # ensure client linkage
     await ensure_client(session, coach_id, chosen.id)
+    _log_attendee_resolved(attendee.raw_email, str(chosen.id) if chosen else None, matched=chosen is not None)
     return chosen.id
 
 
@@ -363,6 +388,7 @@ async def upsert_meeting(
     transcript_status: Optional[str] = None,
 ) -> Meeting:
     external_refs = external_refs or {}
+    _set_coach_context(coach_id)
 
     if ical_uid:
         existing_stmt = select(Meeting).where(Meeting.ical_uid == ical_uid)
@@ -391,6 +417,7 @@ async def upsert_meeting(
                     changed = True
             if changed:
                 await session.flush()
+            _log_meeting_upserted(str(existing.id), coach_id, platform or "unknown", created=False, updated=changed)
             return existing
 
     m = Meeting(
@@ -407,6 +434,7 @@ async def upsert_meeting(
     )
     session.add(m)
     await session.flush()
+    _log_meeting_upserted(str(m.id), coach_id, platform or "unknown", created=True)
     return m
 
 

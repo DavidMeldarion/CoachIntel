@@ -186,6 +186,8 @@ async def calendly_webhook(
     x_calendly_signature: Optional[str] = Header(None),
     x_calendly_webhook_request_timestamp: Optional[str] = Header(None),
 ):
+    # Lazy import logging helpers to avoid circular import at module load
+    from app.main import log_webhook_received, set_log_coach
     raw = body.model_dump()
     secret = os.getenv("CALENDLY_WEBHOOK_SECRET", "")
     body_bytes = _canonical_json(raw)
@@ -198,7 +200,9 @@ async def calendly_webhook(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid timestamp header")
     if secret and not verify_hmac_signature(secret, body_bytes, x_calendly_signature):
+        log_webhook_received("calendly", status="invalid_signature")
         raise HTTPException(status_code=400, detail="Invalid signature")
+    log_webhook_received("calendly", status="received", detail="payload_ingest_start")
 
     # Replay protection: derive nonce (preferred: invitee uuid if available, else hash of body)
     payload = raw.get("payload") or {}
@@ -211,7 +215,7 @@ async def calendly_webhook(
     redis_client = get_redis()
     replay_key = f"cal:wh:nonce:{nonce}"
     if redis_client.get(replay_key):
-        # Previously seen
+        log_webhook_received("calendly", status="replay", detail="nonce_already_seen")
         raise HTTPException(status_code=409, detail="Replay detected")
     # store nonce with short TTL (default 1 day)
     ttl = int(os.getenv("CALENDLY_REPLAY_TTL", "86400"))
@@ -223,11 +227,13 @@ async def calendly_webhook(
     # Provider-wide rate limit (per minute) before heavier DB lookups
     rl_limit = int(os.getenv("WEBHOOK_RATE_LIMIT_PER_MINUTE", "300"))
     if not rate_limit(f"rl:calendly:{int(time.time()//60)}", rl_limit, 60):
+        log_webhook_received("calendly", status="rate_limited")
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
     # Short debounce window (handles rapid duplicate bursts distinct from long replay TTL)
     debounce_ttl = int(os.getenv("CALENDLY_DEBOUNCE_SECONDS", "8"))
     if debounce(f"db:calendly:{nonce}", debounce_ttl):
+        log_webhook_received("calendly", status="debounced", detail=nonce)
         return {"accepted": True, "nonce": nonce, "debounced": True}
 
     # Directly process using service layer (multi-account fan-out if coach unspecified)
@@ -239,11 +245,13 @@ async def calendly_webhook(
             acct_stmt = select(ExternalAccount).where(ExternalAccount.provider == 'calendly')
         accounts = (await session.execute(acct_stmt)).scalars().all()
         if not accounts:
-            # Fall back to enqueue for later (legacy) if no accounts resolved
             enqueue("calendly_ingest", raw)
+            log_webhook_received("calendly", status="accepted_no_accounts", detail="fanout_none")
             return {"accepted": True, "nonce": nonce, "processed": False, "reason": "no_accounts"}
         for acct in accounts:
             try:
+                # bind coach id context
+                set_log_coach(acct.coach_id)
                 res = await handle_calendly_webhook(session, acct.coach_id, raw)
                 if res.ok:
                     await session.commit()
@@ -253,6 +261,7 @@ async def calendly_webhook(
             except Exception as e:  # pragma: no cover
                 await session.rollback()
                 results.append({"coach_id": acct.coach_id, "ok": False, "error": str(e)})
+        log_webhook_received("calendly", status="processed", detail=f"accounts={len(accounts)}", results_ok=sum(1 for r in results if r.get('ok')))  # type: ignore
     return {"accepted": True, "nonce": nonce, "results": results}
 
 # -------------------------
@@ -264,20 +273,26 @@ async def zoom_webhook(
     x_zm_signature: Optional[str] = Header(None),
     x_zm_request_timestamp: Optional[str] = Header(None),
 ):
+    from app.main import log_webhook_received
     secret = os.getenv("ZOOM_WEBHOOK_SECRET", "")
     body_bytes = _canonical_json(body.model_dump())
     if secret and not verify_zoom_signature(secret, x_zm_request_timestamp, body_bytes, x_zm_signature):
+        log_webhook_received("zoom", status="invalid_signature")
         raise HTTPException(status_code=400, detail="Invalid zoom signature")
+    log_webhook_received("zoom", status="received")
     # Rate limit (provider global)
     rl_limit = int(os.getenv("WEBHOOK_RATE_LIMIT_PER_MINUTE", "300"))
     if not rate_limit(f"rl:zoom:{int(time.time()//60)}", rl_limit, 60):
+        log_webhook_received("zoom", status="rate_limited")
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     # Debounce based on hash (short TTL)
     body_hash = hashlib.sha256(body_bytes).hexdigest()
     debounce_ttl = int(os.getenv("ZOOM_DEBOUNCE_SECONDS", "5"))
     if debounce(f"db:zoom:{body_hash}", debounce_ttl):
+        log_webhook_received("zoom", status="debounced", detail=body_hash)
         return {"accepted": True, "debounced": True}
     enqueue("zoom_ingest", body.model_dump())
+    log_webhook_received("zoom", status="enqueued", detail=body_hash)
     return {"accepted": True, "hash": body_hash}
 
 # -------------------------
@@ -285,14 +300,17 @@ async def zoom_webhook(
 # -------------------------
 @router.post("/fireflies", status_code=202)
 async def fireflies_webhook(body: FirefliesEvent, limit: int = 25):
+    from app.main import log_webhook_received
     # Identify all coaches with fireflies external account and trigger recent ingestion
     rl_limit = int(os.getenv("WEBHOOK_RATE_LIMIT_PER_MINUTE", "300"))
     if not rate_limit(f"rl:fireflies:{int(time.time()//60)}", rl_limit, 60):
+        log_webhook_received("fireflies", status="rate_limited")
         raise HTTPException(status_code=429, detail="Rate limit exceeded")
     raw_bytes = _canonical_json(body.model_dump())
     body_hash = hashlib.sha256(raw_bytes).hexdigest()
     debounce_ttl = int(os.getenv("FIREFLIES_DEBOUNCE_SECONDS", "5"))
     if debounce(f"db:fireflies:{body_hash}", debounce_ttl):
+        log_webhook_received("fireflies", status="debounced", detail=body_hash)
         return {"accepted": True, "debounced": True}
     async with AsyncSessionLocal() as session:  # type: ignore
         acct_stmt = select(ExternalAccount).where(ExternalAccount.provider == 'fireflies')
@@ -304,6 +322,7 @@ async def fireflies_webhook(body: FirefliesEvent, limit: int = 25):
         except Exception as e:  # pragma: no cover
             logger.warning("Failed to enqueue fireflies ingestion for coach %s: %s", cid, e)
     enqueue("fireflies_ingest", body.model_dump())  # legacy raw log ingestion
+    log_webhook_received("fireflies", status="enqueued", detail=f"fanout={len(coach_ids)}")
     return {"accepted": True, "fanout": len(coach_ids)}
 
 

@@ -12,6 +12,9 @@ from urllib.parse import urlencode
 from datetime import datetime, timedelta
 from sqlalchemy.orm import selectinload
 import logging
+import structlog
+import uuid as _uuid_mod
+import contextvars
 # Add crypto utils for HMAC tokens
 import hmac, hashlib, base64
 from uuid import UUID as UUID_t
@@ -34,7 +37,16 @@ from app.models import (
     UserOrgRole,  # added
 )
 from app.integrations import get_fireflies_meeting_details, test_fireflies_api_key
-from app.worker import celery_app, sync_fireflies_meetings
+# Delayed import of celery worker to avoid circular import during module initialization
+celery_app = None
+sync_fireflies_meetings = None
+
+def _lazy_load_worker():  # late binding to prevent circular import
+    global celery_app, sync_fireflies_meetings
+    if celery_app is None or sync_fireflies_meetings is None:
+        from app import worker  # type: ignore
+        celery_app = worker.celery_app
+        sync_fireflies_meetings = worker.sync_fireflies_meetings
 from .config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_TOKEN_URL, GOOGLE_CALENDAR_EVENTS_URL
 
 # Import leads router
@@ -62,9 +74,64 @@ if FRONTEND_URL.startswith("https://"):
 logger = logging.getLogger("coachintel")
 logger.setLevel(logging.INFO)
 if not logger.hasHandlers():
+    # Base stdlib handler (structlog will wrap)
     handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    handler.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(handler)
+
+# -------------------------
+# Structlog configuration
+# -------------------------
+structlog_context = {
+    "request_id": contextvars.ContextVar("request_id", default=None),
+    "coach_id": contextvars.ContextVar("coach_id", default=None),
+    "provider": contextvars.ContextVar("provider", default=None),
+}
+
+def _add_context(logger, method_name, event_dict):  # noqa: D401
+    rid = structlog_context["request_id"].get()
+    if rid:
+        event_dict["request_id"] = rid
+    cid = structlog_context["coach_id"].get()
+    if cid is not None:
+        event_dict["coach_id"] = cid
+    prov = structlog_context["provider"].get()
+    if prov:
+        event_dict["provider"] = prov
+    return event_dict
+
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        _add_context,
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso", utc=True),
+        structlog.processors.dict_tracebacks,
+        structlog.processors.JSONRenderer(),
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+    cache_logger_on_first_use=True,
+)
+
+slog = structlog.get_logger()
+
+def set_log_coach(coach_id: int | None):  # utility binder
+    structlog_context["coach_id"].set(coach_id)
+
+def set_log_provider(provider: str | None):
+    structlog_context["provider"].set(provider)
+
+def log_webhook_received(provider: str, status: str, detail: str | None = None, **extra):
+    slog.info("webhook_received", provider=provider, status=status, detail=detail, **extra)
+
+def log_meeting_upserted(meeting_id: str, coach_id: int, source: str, created: bool, **extra):
+    slog.info("meeting_upserted", meeting_id=meeting_id, coach_id=coach_id, source=source, created=created, **extra)
+
+def log_attendee_resolved(raw_email: str | None, person_id: str | None, matched: bool, **extra):
+    slog.info("attendee_resolved", raw_email=raw_email, person_id=person_id, matched=matched, **extra)
+
+def log_tokens_refreshed(coach_id: int, provider: str, success: bool, rotated: bool | None = None, **extra):
+    slog.info("tokens_refreshed", coach_id=coach_id, provider=provider, success=success, rotated=rotated, **extra)
 
 # Log CORS configuration for debugging
 logger.info(f"CORS configured for origins: {['http://localhost:3000', 'http://127.0.0.1:3000'] + frontend_origins}")
@@ -75,6 +142,33 @@ app = FastAPI(
     # Trust proxy headers for proper URL generation
     servers=[{"url": "https://api.coachintel.ai", "description": "Production server"}] if os.getenv("RAILWAY_ENVIRONMENT") else None
 )
+
+# -------------------------
+# Middleware: payload size limit (default 1MB)
+# -------------------------
+MAX_PAYLOAD_BYTES = int(os.getenv("MAX_REQUEST_BYTES", str(1024 * 1024)))  # 1MB default
+
+@app.middleware("http")
+async def limit_payload_size(request: Request, call_next):
+    # Only apply to methods that can have bodies
+    if request.method in {"POST", "PUT", "PATCH"}:
+        # Content-Length fast path
+        cl = request.headers.get("content-length")
+        if cl and cl.isdigit() and int(cl) > MAX_PAYLOAD_BYTES:
+            return JSONResponse(status_code=413, content={"detail": "Payload too large"})
+        # For streaming/no content-length, read but enforce limit via manual buffer
+        # Use request.body() which reads entire body once; rely on CL fast path for typical JSON
+        if not cl:
+            body = await request.body()
+            if len(body) > MAX_PAYLOAD_BYTES:
+                return JSONResponse(status_code=413, content={"detail": "Payload too large"})
+            # Reconstruct scope body for downstream (FastAPI caches body() but be explicit)
+            async def receive_gen(first=True, data=body):
+                if first:
+                    return {"type": "http.request", "body": data, "more_body": False}
+                return {"type": "http.request", "body": b"", "more_body": False}
+            request._receive = lambda first=True: receive_gen(first)  # type: ignore
+    return await call_next(request)
 
 # Trust proxy headers for Railway deployment
 @app.middleware("http")
@@ -89,6 +183,26 @@ async def trust_proxy_headers(request: Request, call_next):
     
     response = await call_next(request)
     return response
+
+# Request id + context binding middleware (after proxy adjustment)
+@app.middleware("http")
+async def request_id_and_context(request: Request, call_next):
+    rid = request.headers.get("x-request-id") or str(_uuid_mod.uuid4())
+    structlog_context["request_id"].set(rid)
+    # infer provider from webhook path early
+    path = request.url.path.lower()
+    if path.startswith("/webhooks/"):
+        parts = path.split("/")
+        if len(parts) > 2:
+            structlog_context["provider"].set(parts[2])
+    try:
+        response = await call_next(request)
+        response.headers.setdefault("X-Request-Id", rid)
+        return response
+    finally:
+        # clear context for safety (new context per request anyway)
+        structlog_context["coach_id"].set(None)
+        structlog_context["provider"].set(None)
 
 # Password hashing setup
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -149,6 +263,38 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+# -------------------------
+# Webhook shared security (per-provider secret headers)
+# -------------------------
+PROVIDER_WEBHOOK_SECRETS = {
+    "calendly": os.getenv("CALENDLY_PROVIDER_SECRET"),
+    "zoom": os.getenv("ZOOM_PROVIDER_SECRET"),
+    "fireflies": os.getenv("FIREFLIES_PROVIDER_SECRET"),
+}
+
+REQUIRE_PROVIDER_WEBHOOK_HEADER = os.getenv("REQUIRE_PROVIDER_WEBHOOK_SECRET", "true").lower() in {"1", "true", "yes"}
+PROVIDER_HEADER_NAME = os.getenv("PROVIDER_WEBHOOK_HEADER", "X-Webhook-Secret")
+
+@app.middleware("http")
+async def enforce_provider_webhook_secret(request: Request, call_next):
+    if not REQUIRE_PROVIDER_WEBHOOK_HEADER:
+        return await call_next(request)
+    path = request.url.path.lower()
+    if path.startswith("/webhooks/"):
+        # Determine provider from path: /webhooks/{provider}...
+        parts = path.split("/")
+        provider = parts[2] if len(parts) > 2 else None
+        if provider in PROVIDER_WEBHOOK_SECRETS:
+            expected = PROVIDER_WEBHOOK_SECRETS.get(provider)
+            # If no expected secret configured, allow (fail-open) but log; otherwise enforce
+            if expected:
+                provided = request.headers.get(PROVIDER_HEADER_NAME)
+                if not provided or not hmac.compare_digest(provided, expected):
+                    return JSONResponse(status_code=401, content={"detail": "Invalid or missing webhook secret"})
+            else:
+                logger.warning("No provider webhook secret configured for %s; allowing request", provider)
+    return await call_next(request)
 
 SECRET_KEY = os.getenv("JWT_SECRET", "supersecretkey")
 ALGORITHM = "HS256"
@@ -1378,7 +1524,8 @@ async def sync_external_meetings(source: str = Query(..., description="fireflies
             logger.warning(f"[SYNC DEBUG] No Fireflies API key for user: {user.email}")
             return {"error": "Fireflies API key not found"}
         try:
-            task = sync_fireflies_meetings.delay(user.email, user_profile.fireflies_api_key)
+            _lazy_load_worker()
+            task = sync_fireflies_meetings.delay(user.email, user_profile.fireflies_api_key)  # type: ignore
         except Exception as e:
             logger.error(f"[SYNC ERROR] Failed to enqueue Celery task: {e}")
             raise HTTPException(status_code=503, detail="Task queue unavailable")

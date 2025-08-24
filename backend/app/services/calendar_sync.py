@@ -56,6 +56,9 @@ async def list_events(session: AsyncSession, coach_id: int, provider: str, time_
 async def upsert_events_as_meetings(session: AsyncSession, coach_id: int, provider: str, events: List[Dict[str, Any]]) -> int:
     provider = provider.lower()
     count = 0
+    # Lazy import to avoid circular dependency (main -> worker -> this)
+    from app.main import log_meeting_upserted, set_log_coach
+    set_log_coach(coach_id)
     for ev in events:
         ext_id = ev.get('id')
         if not ext_id:
@@ -71,6 +74,7 @@ async def upsert_events_as_meetings(session: AsyncSession, coach_id: int, provid
                 join_url = eps[0].get('uri')
         stmt = select(Meeting).where(Meeting.coach_id == coach_id, Meeting.external_refs['google_event_id'].astext == ext_id)  # type: ignore
         existing = (await session.execute(stmt)).scalar_one_or_none()
+        created = False
         if existing:
             existing.started_at = existing.started_at or started_at
             existing.ended_at = existing.ended_at or ended_at
@@ -81,6 +85,7 @@ async def upsert_events_as_meetings(session: AsyncSession, coach_id: int, provid
             existing.external_refs = {**(existing.external_refs or {}), 'google_event_id': ext_id}
             meeting = existing
         else:
+            created = True
             meeting = Meeting(
                 coach_id=coach_id,
                 started_at=started_at,
@@ -92,6 +97,7 @@ async def upsert_events_as_meetings(session: AsyncSession, coach_id: int, provid
             )
             session.add(meeting)
             await session.flush()
+        log_meeting_upserted(str(meeting.id), coach_id, 'google_calendar', created=created)
         await _process_event_attendees(session, coach_id, meeting, ev)
         count += 1
     return count
@@ -122,6 +128,8 @@ async def upsert_zoom_meeting(session: AsyncSession, coach_id: int, meeting_id: 
     Returns Result with summary counts.
     """
     client = ZoomClient(session, coach_id)
+    from app.main import log_meeting_upserted, set_log_coach
+    set_log_coach(coach_id)
     try:
         meeting_raw = await client.get_meeting(meeting_id)
         if not meeting_raw:
@@ -141,6 +149,7 @@ async def upsert_zoom_meeting(session: AsyncSession, coach_id: int, meeting_id: 
             Meeting.external_refs['zoom_meeting_id'].astext == str(meeting_id)  # type: ignore
         )
         existing = (await session.execute(stmt)).scalar_one_or_none()
+        created = False
         if existing:
             m = existing
             if start and (not m.started_at or start < m.started_at):
@@ -155,6 +164,7 @@ async def upsert_zoom_meeting(session: AsyncSession, coach_id: int, meeting_id: 
             refs.setdefault('zoom_meeting_id', str(meeting_id))
             m.external_refs = refs
         else:
+            created = True
             m = Meeting(
                 coach_id=coach_id,
                 started_at=start,
@@ -166,6 +176,7 @@ async def upsert_zoom_meeting(session: AsyncSession, coach_id: int, meeting_id: 
             )
             session.add(m)
             await session.flush()
+        log_meeting_upserted(str(m.id), coach_id, 'zoom', created=created)
         # Participants
         participants = await client.list_meeting_participants(meeting_id)
         added = 0
@@ -192,6 +203,8 @@ async def upsert_zoom_meeting(session: AsyncSession, coach_id: int, meeting_id: 
 async def upsert_fireflies_meetings(session: AsyncSession, coach_id: int, limit: int = 25) -> Result[Dict[str, Any]]:
     """List recent Fireflies meetings and upsert them with participants."""
     client = FirefliesClient(session, coach_id)
+    from app.main import log_meeting_upserted, set_log_coach
+    set_log_coach(coach_id)
     try:
         summaries = await client.list_meetings(limit=limit)
         count = 0
@@ -207,6 +220,7 @@ async def upsert_fireflies_meetings(session: AsyncSession, coach_id: int, limit:
                 Meeting.external_refs['fireflies_meeting_id'].astext == str(summ.id)  # type: ignore
             )
             existing = (await session.execute(stmt)).scalar_one_or_none()
+            created = False
             if existing:
                 m = existing
                 if start and (not m.started_at or start < m.started_at):
@@ -221,6 +235,7 @@ async def upsert_fireflies_meetings(session: AsyncSession, coach_id: int, limit:
                 refs.setdefault('fireflies_meeting_id', summ.id)
                 m.external_refs = refs
             else:
+                created = True
                 m = Meeting(
                     coach_id=coach_id,
                     started_at=start,
@@ -232,6 +247,7 @@ async def upsert_fireflies_meetings(session: AsyncSession, coach_id: int, limit:
                 )
                 session.add(m)
                 await session.flush()
+            log_meeting_upserted(str(m.id), coach_id, 'fireflies', created=created)
             # participants
             for p in summ.participants:
                 if not (p.email or p.name):
@@ -258,6 +274,8 @@ async def upsert_calendly_event(session: AsyncSession, coach_id: int, event_uuid
     If invitee_uuid not provided, attempts to resolve from event payload (not implemented here).
     """
     client = CalendlyClient(session, coach_id)
+    from app.main import log_meeting_upserted, set_log_coach
+    set_log_coach(coach_id)
     try:
         event = await client.get_scheduled_event(event_uuid)
         if not event:
@@ -272,6 +290,7 @@ async def upsert_calendly_event(session: AsyncSession, coach_id: int, event_uuid
             Meeting.external_refs['calendly_event_uri'].astext == event.uri  # type: ignore
         )
         existing = (await session.execute(stmt)).scalar_one_or_none()
+        created = False
         if existing:
             m = existing
             if start and (not m.started_at or start < m.started_at):
@@ -286,6 +305,7 @@ async def upsert_calendly_event(session: AsyncSession, coach_id: int, event_uuid
                 refs.setdefault('calendly_invitee_uuid', invitee.uuid)
             m.external_refs = refs
         else:
+            created = True
             refs = {'calendly_event_uri': event.uri}
             if invitee and invitee.uuid:
                 refs['calendly_invitee_uuid'] = invitee.uuid
@@ -300,6 +320,7 @@ async def upsert_calendly_event(session: AsyncSession, coach_id: int, event_uuid
             )
             session.add(m)
             await session.flush()
+        log_meeting_upserted(str(m.id), coach_id, 'calendly', created=created)
         added = 0
         if invitee:
             att = await add_or_update_attendee(
