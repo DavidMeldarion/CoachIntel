@@ -48,7 +48,14 @@ def provider_config(provider: str) -> Dict[str, Any]:
             "token_url": "https://zoom.us/oauth/token",
             "client_id": _env("OAUTH_ZOOM_CLIENT_ID"),
             "client_secret": _env("OAUTH_ZOOM_CLIENT_SECRET"),
-            "scopes": ["meeting:read", "user:read"],
+            # Include admin scopes for richer participant & dashboard metrics when app is account-level.
+            # Consumers should request only what they need; UI can show conditional features.
+            "scopes": [
+                "meeting:read",
+                "meeting:read:admin",
+                "dashboard_meetings:read:admin",
+                "user:read",
+            ],
             "redirect_uri": _env("OAUTH_ZOOM_REDIRECT_URI", required=False) or (_env("OAUTH_REDIRECT_BASE") + "/oauth/zoom/callback"),
             "response_type": "code",
             "extra_params": {},
@@ -119,6 +126,7 @@ def exchange_code(provider: str, code: str, redirect_uri: str | None = None) -> 
     refresh_token = tok.get("refresh_token")
     expires_in = tok.get("expires_in") or tok.get("expires") or 3600
     external_user_id = tok.get("user_id") or tok.get("owner_id") or tok.get("resource_owner_id")
+    # Zoom returns 'user_id' (account-level) and sometimes 'owner_id'; store for mapping webhooks
     scopes_raw = tok.get("scope") or tok.get("scopes") or ""
     if isinstance(scopes_raw, str):
         scopes_list = [s for s in scopes_raw.replace(",", " ").split() if s]

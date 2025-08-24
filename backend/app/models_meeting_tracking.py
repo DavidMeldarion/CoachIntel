@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import (
-    MetaData, Enum as SAEnum, text, ForeignKey, String, DateTime, JSON, func, Index, UniqueConstraint, PrimaryKeyConstraint, Computed
+    MetaData, Enum as SAEnum, text, ForeignKey, String, DateTime, JSON, func, Index, UniqueConstraint, PrimaryKeyConstraint, Computed, Integer
 )
 from sqlalchemy.dialects.postgresql import UUID, ARRAY, CITEXT
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -99,6 +99,15 @@ class ExternalAccount(Base):
     scopes: Mapped[List[str]] = mapped_column(ARRAY(String), server_default=text("'{}'"), nullable=False)
     external_user_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Google Calendar incremental sync tokens (per primary calendar)
+    calendar_sync_token: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    calendar_page_token: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Active watch channel metadata (Google push notifications)
+    calendar_channel_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    calendar_resource_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    calendar_channel_expires: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Zoom specific: stable user/host identifier for mapping webhooks
+    zoom_user_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
 
     coach: Mapped[User] = relationship(back_populates="external_accounts")
 
@@ -125,6 +134,7 @@ class Meeting(Base):
     location: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     external_refs: Mapped[dict] = mapped_column(JSON, server_default=text("'{}'::jsonb"), nullable=False)
     transcript_status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)  # e.g. scheduled, canceled, completed
 
     coach: Mapped[User] = relationship(back_populates="meetings")
     attendees: Mapped[List["MeetingAttendee"]] = relationship(back_populates="meeting", cascade="all, delete-orphan")
@@ -150,6 +160,10 @@ class MeetingAttendee(Base):
     raw_phone: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     raw_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     role: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Zoom (and other live meeting providers) participant timing metadata
+    join_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    leave_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # Generated identity key replicating COALESCE(external_attendee_id, raw_email, raw_name)
     identity_key: Mapped[str] = mapped_column(
         String,

@@ -16,7 +16,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models_meeting_tracking import Meeting
+from app.models_meeting_tracking import Meeting, ExternalAccount
 from app.repositories.meeting_tracking import add_or_update_attendee, resolve_attendee
 from app.clients.google_calendar_client import GoogleCalendarClient
 from app.clients.zoom_client import ZoomClient
@@ -56,8 +56,8 @@ async def list_events(session: AsyncSession, coach_id: int, provider: str, time_
 async def upsert_events_as_meetings(session: AsyncSession, coach_id: int, provider: str, events: List[Dict[str, Any]]) -> int:
     provider = provider.lower()
     count = 0
-    # Lazy import to avoid circular dependency (main -> worker -> this)
-    from app.main import log_meeting_upserted, set_log_coach
+    # Import logging helpers (defer to keep dependency light)
+    from app.logging import log_meeting_upserted, set_log_coach
     set_log_coach(coach_id)
     for ev in events:
         ext_id = ev.get('id')
@@ -101,6 +101,141 @@ async def upsert_events_as_meetings(session: AsyncSession, coach_id: int, provid
         await _process_event_attendees(session, coach_id, meeting, ev)
         count += 1
     return count
+
+# ---------------------------------------------------------------------------
+# Incremental sync helpers (Google Calendar)
+# ---------------------------------------------------------------------------
+from app.clients.google_calendar_client import GoogleCalendarClient, InvalidSyncToken
+
+async def incremental_google_sync(session: AsyncSession, coach_id: int, time_min: datetime, time_max: datetime, page_size: int = 250) -> Result[int]:
+    """Run an incremental sync for a coach's primary calendar.
+
+    Persists nextSyncToken & handles 410 invalidation.
+    Returns number of events processed.
+    """
+    acct = await session.get(ExternalAccount, (await session.execute(select(ExternalAccount.id).where(ExternalAccount.coach_id==coach_id, ExternalAccount.provider=='google'))).scalar_one_or_none())  # type: ignore
+    # Fallback: query full object
+    if not acct:
+        acct = (await session.execute(select(ExternalAccount).where(ExternalAccount.coach_id==coach_id, ExternalAccount.provider=='google'))).scalar_one_or_none()
+    if not acct:
+        return failure("No google external account")
+    client = GoogleCalendarClient(session, coach_id)
+    sync_token = acct.calendar_sync_token
+    page_token = None
+    total = 0
+    try:
+        while True:
+            events, next_sync, next_page = await client.incremental_sync(time_min, time_max, page_size, sync_token=sync_token, page_token=page_token)
+            if events:
+                # Convert to dict list for reuse of upsert pipeline
+                ev_dicts: List[Dict[str, Any]] = [e.raw for e in events]
+                total += await upsert_events_as_meetings(session, coach_id, 'google', ev_dicts)
+            if next_sync:
+                acct.calendar_sync_token = next_sync
+            if not next_page:
+                break
+            page_token = next_page
+        await session.flush()
+        return success(total)
+    except InvalidSyncToken:
+        # Clear and restart full sync once
+        acct.calendar_sync_token = None
+        await session.flush()
+        events, next_sync, _ = await client.incremental_sync(time_min, time_max, page_size, sync_token=None)
+        if events:
+            ev_dicts = [e.raw for e in events]
+            total += await upsert_events_as_meetings(session, coach_id, 'google', ev_dicts)
+        if next_sync:
+            acct.calendar_sync_token = next_sync
+        await session.flush()
+        return success(total)
+    except Exception as e:  # pragma: no cover
+        logger.warning("incremental_google_sync error coach=%s: %s", coach_id, e)
+        return failure(str(e))
+
+
+async def upsert_attendees_to_client_index(session: AsyncSession, coach_id: int, meeting: Meeting, attendees: List[Dict[str, Any]]):
+    """Given a meeting and raw attendee dicts (Google format), upsert MeetingAttendee rows
+    and attempt identity resolution -> ensure Client records.
+
+    Attendee dict fields used: email, displayName, responseStatus.
+    """
+    from app.repositories.meeting_tracking import add_or_update_attendee, resolve_attendee, ensure_client
+    for a in attendees:
+        if not isinstance(a, dict):
+            continue
+        email = a.get('email')
+        display = a.get('displayName') or a.get('display_name')
+        if not (email or display):
+            continue
+        ma = await add_or_update_attendee(
+            session,
+            meeting_id=meeting.id,
+            source='google',
+            raw_email=email,
+            raw_name=display,
+            role=a.get('responseStatus'),
+        )
+        # Identity resolution (will create review candidate if ambiguous)
+        await resolve_attendee(session, coach_id=coach_id, attendee=ma)
+        # If resolved to a person + client not present, ensure client
+        if ma.person_id:
+            await ensure_client(session, coach_id=coach_id, person_id=ma.person_id)
+
+# ---------------------------------------------------------------------------
+# Watch channel helpers
+# ---------------------------------------------------------------------------
+from uuid import uuid4
+from app.clients.google_calendar_client import WatchError
+
+async def start_google_watch(session: AsyncSession, coach_id: int, webhook_address: str, token: str | None = None, retries: int = 3) -> Result[Dict[str, Any]]:
+    acct = (await session.execute(select(ExternalAccount).where(ExternalAccount.coach_id==coach_id, ExternalAccount.provider=='google'))).scalar_one_or_none()
+    if not acct:
+        return failure("No google external account")
+    client = GoogleCalendarClient(session, coach_id)
+    channel_id = str(uuid4())
+    attempt = 0
+    delay = 1.0
+    resp = None
+    while attempt <= retries:
+        try:
+            resp = await client.start_watch(webhook_address, channel_id, token=token)
+            break
+        except WatchError as e:
+            attempt += 1
+            if attempt > retries:
+                return failure(str(e))
+            import asyncio
+            await asyncio.sleep(delay)
+            delay *= 2
+    if not resp:  # defensive
+        return failure("Unable to start watch")
+    acct.calendar_channel_id = resp.get('id')
+    acct.calendar_resource_id = resp.get('resourceId')
+    exp_ms = resp.get('expiration')
+    if exp_ms:
+        try:
+            exp_dt = datetime.utcfromtimestamp(int(exp_ms)/1000).replace(tzinfo=None)
+            acct.calendar_channel_expires = exp_dt
+        except Exception:
+            pass
+    await session.flush()
+    return success({"channel_id": acct.calendar_channel_id, "resource_id": acct.calendar_resource_id})
+
+async def stop_google_watch(session: AsyncSession, coach_id: int) -> Result[bool]:
+    acct = (await session.execute(select(ExternalAccount).where(ExternalAccount.coach_id==coach_id, ExternalAccount.provider=='google'))).scalar_one_or_none()
+    if not acct or not acct.calendar_channel_id or not acct.calendar_resource_id:
+        return failure("No active channel")
+    client = GoogleCalendarClient(session, coach_id)
+    try:
+        await client.stop_watch(acct.calendar_channel_id, acct.calendar_resource_id)
+        acct.calendar_channel_id = None
+        acct.calendar_resource_id = None
+        acct.calendar_channel_expires = None
+        await session.flush()
+        return success(True)
+    except WatchError as e:
+        return failure(str(e))
 
 async def _process_event_attendees(session: AsyncSession, coach_id: int, meeting: Meeting, event: Dict[str, Any]):
     attendees = event.get('attendees') or []
@@ -150,6 +285,7 @@ async def upsert_zoom_meeting(session: AsyncSession, coach_id: int, meeting_id: 
         )
         existing = (await session.execute(stmt)).scalar_one_or_none()
         created = False
+        zoom_uuid = meeting_raw.get('uuid')  # may be needed to map webhook uuid->coach
         if existing:
             m = existing
             if start and (not m.started_at or start < m.started_at):
@@ -162,6 +298,8 @@ async def upsert_zoom_meeting(session: AsyncSession, coach_id: int, meeting_id: 
                 m.join_url = join_url
             refs = dict(m.external_refs or {})
             refs.setdefault('zoom_meeting_id', str(meeting_id))
+            if zoom_uuid and 'zoom_meeting_uuid' not in refs:
+                refs['zoom_meeting_uuid'] = zoom_uuid
             m.external_refs = refs
         else:
             created = True
@@ -172,7 +310,7 @@ async def upsert_zoom_meeting(session: AsyncSession, coach_id: int, meeting_id: 
                 topic=topic,
                 join_url=join_url,
                 platform='zoom',
-                external_refs={'zoom_meeting_id': str(meeting_id)},
+                external_refs={'zoom_meeting_id': str(meeting_id), **({'zoom_meeting_uuid': zoom_uuid} if zoom_uuid else {})},
             )
             session.add(m)
             await session.flush()

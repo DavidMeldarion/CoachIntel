@@ -12,6 +12,12 @@ from app.models import AsyncSessionLocal
 from sqlalchemy import select
 from app.models_meeting_tracking import ExternalAccount
 from app.services.calendly_ingestion import handle_calendly_webhook
+from app.services.calendly_subscriptions import create_subscription as cal_create_sub, delete_subscription as cal_delete_sub, verify_webhook_signature as cal_verify_sig
+from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timedelta, timezone
+from app.services.calendar_sync import incremental_google_sync, start_google_watch, stop_google_watch
+from app.models_meeting_tracking import ExternalAccount
+from app.models import AsyncSessionLocal as _AsyncSessionLocal
 
 try:
     import redis  # type: ignore
@@ -82,6 +88,93 @@ class ZoomEvent(BaseModel):
 class FirefliesEvent(BaseModel):
     event: Optional[str] = None  # if available
     payload: Dict[str, Any] = Field(default_factory=dict)
+
+# -------------------------
+# Google Calendar push (Channel notifications)
+# -------------------------
+@router.post('/google')
+async def google_calendar_push(
+    x_goog_channel_id: str | None = Header(None, alias='X-Goog-Channel-ID'),
+    x_goog_resource_id: str | None = Header(None, alias='X-Goog-Resource-ID'),
+    x_goog_resource_state: str | None = Header(None, alias='X-Goog-Resource-State'),
+    x_goog_message_number: str | None = Header(None, alias='X-Goog-Message-Number'),
+):
+    # No body; we must look up ExternalAccount by channel/resource
+    if not x_goog_channel_id or not x_goog_resource_id:
+        raise HTTPException(status_code=400, detail="Missing channel/resource headers")
+    async with _AsyncSessionLocal() as session:  # type: ignore
+        acct = await _find_google_account(session, x_goog_channel_id, x_goog_resource_id)
+        if not acct:
+            logger.warning("Google push for unknown channel=%s resource=%s", x_goog_channel_id, x_goog_resource_id)
+            return {"ok": True, "ignored": True}
+        # Trigger incremental sync immediately (bounded time window)
+        now = datetime.now(timezone.utc)
+        window_start = now - timedelta(days=7)  # configurable lookback for new token
+        res = await incremental_google_sync(session, coach_id=acct.coach_id, time_min=window_start, time_max=now + timedelta(days=30))
+        await session.commit()
+        if not res.ok:
+            logger.warning("Incremental sync failed coach=%s: %s", acct.coach_id, res.error)
+        return {"ok": True, "synced": res.ok, "count": res.value if res.ok else 0}
+
+async def _find_google_account(session: AsyncSession, channel_id: str, resource_id: str) -> ExternalAccount | None:
+    stmt = select(ExternalAccount).where(
+        ExternalAccount.calendar_channel_id == channel_id,
+        ExternalAccount.calendar_resource_id == resource_id,
+        ExternalAccount.provider == 'google'
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+# -------------------------
+# Admin endpoints to manage Google Calendar watch channels
+# -------------------------
+@router.post('/google/watch/start')
+async def start_google_calendar_watch(
+    coach_id: int,
+    webhook_base: str,  # base URL where /webhooks/google is exposed (public https)
+    token: str | None = None,
+    admin_token: str | None = Header(None, alias='X-Admin-Token'),
+):
+    require_admin(admin_token)
+    address = webhook_base.rstrip('/') + '/webhooks/google'
+    async with _AsyncSessionLocal() as session:  # type: ignore
+        res = await start_google_watch(session, coach_id=coach_id, webhook_address=address, token=token)
+        if not res.ok:
+            raise HTTPException(status_code=400, detail=res.error)
+        await session.commit()
+        return res.value
+
+@router.post('/google/watch/stop')
+async def stop_google_calendar_watch(
+    coach_id: int,
+    admin_token: str | None = Header(None, alias='X-Admin-Token'),
+):
+    require_admin(admin_token)
+    async with _AsyncSessionLocal() as session:  # type: ignore
+        res = await stop_google_watch(session, coach_id=coach_id)
+        if not res.ok:
+            raise HTTPException(status_code=400, detail=res.error)
+        await session.commit()
+        return {"stopped": True}
+
+@router.post('/google/watch/rotate')
+async def rotate_google_calendar_watch(
+    coach_id: int,
+    webhook_base: str,
+    admin_token: str | None = Header(None, alias='X-Admin-Token'),
+):
+    """Stop existing watch (if any) and start a new one.
+
+    Useful for proactive rotation before expiration.
+    """
+    require_admin(admin_token)
+    async with _AsyncSessionLocal() as session:  # type: ignore
+        # Stop (ignore errors)
+        await stop_google_watch(session, coach_id=coach_id)
+        res = await start_google_watch(session, coach_id=coach_id, webhook_address=webhook_base.rstrip('/') + '/webhooks/google')
+        if not res.ok:
+            raise HTTPException(status_code=400, detail=res.error)
+        await session.commit()
+        return {"rotated": True, **res.value}
 
 # -------------------------
 # Signature utilities
@@ -189,7 +282,6 @@ async def calendly_webhook(
     # Lazy import logging helpers to avoid circular import at module load
     from app.main import log_webhook_received, set_log_coach
     raw = body.model_dump()
-    secret = os.getenv("CALENDLY_WEBHOOK_SECRET", "")
     body_bytes = _canonical_json(raw)
     # Timestamp tolerance
     if x_calendly_webhook_request_timestamp:
@@ -199,9 +291,7 @@ async def calendly_webhook(
                 raise HTTPException(status_code=400, detail="Stale webhook (timestamp)")
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid timestamp header")
-    if secret and not verify_hmac_signature(secret, body_bytes, x_calendly_signature):
-        log_webhook_received("calendly", status="invalid_signature")
-        raise HTTPException(status_code=400, detail="Invalid signature")
+    # We'll validate signature per-account later (need signing key). For coach-scoped requests with coach_id provided we can early check.
     log_webhook_received("calendly", status="received", detail="payload_ingest_start")
 
     # Replay protection: derive nonce (preferred: invitee uuid if available, else hash of body)
@@ -250,6 +340,10 @@ async def calendly_webhook(
             return {"accepted": True, "nonce": nonce, "processed": False, "reason": "no_accounts"}
         for acct in accounts:
             try:
+                signing_key = (acct.external_refs or {}).get('calendly_signing_key') if acct.external_refs else None
+                if signing_key and not cal_verify_sig(signing_key, body_bytes, x_calendly_signature):
+                    results.append({"coach_id": acct.coach_id, "ok": False, "error": "invalid_signature"})
+                    continue
                 # bind coach id context
                 set_log_coach(acct.coach_id)
                 res = await handle_calendly_webhook(session, acct.coach_id, raw)
@@ -263,6 +357,40 @@ async def calendly_webhook(
                 results.append({"coach_id": acct.coach_id, "ok": False, "error": str(e)})
         log_webhook_received("calendly", status="processed", detail=f"accounts={len(accounts)}", results_ok=sum(1 for r in results if r.get('ok')))  # type: ignore
     return {"accepted": True, "nonce": nonce, "results": results}
+
+# -------------------------
+# Calendly admin subscription management
+# -------------------------
+class CalendlySubCreate(BaseModel):
+    coach_id: int
+    scope: Literal['organization','user']
+    target_uri: str  # organization or user URI
+    webhook_base: str
+
+@router.post('/calendly/subscriptions', status_code=201)
+async def calendly_subscription_create(body: CalendlySubCreate, x_admin_token: Optional[str] = Header(None, alias='X-Admin-Token')):
+    require_admin(x_admin_token)
+    async with AsyncSessionLocal() as session:  # type: ignore
+        url = body.webhook_base.rstrip('/') + '/webhooks/calendly'
+        res = await cal_create_sub(session, body.coach_id, body.scope, url, body.target_uri)
+        if not res.ok:
+            raise HTTPException(status_code=400, detail=res.error)
+        await session.commit()
+        return res.value
+
+class CalendlySubDelete(BaseModel):
+    coach_id: int
+    subscription_id: str
+
+@router.delete('/calendly/subscriptions', status_code=200)
+async def calendly_subscription_delete(body: CalendlySubDelete, x_admin_token: Optional[str] = Header(None, alias='X-Admin-Token')):
+    require_admin(x_admin_token)
+    async with AsyncSessionLocal() as session:  # type: ignore
+        res = await cal_delete_sub(session, body.coach_id, body.subscription_id)
+        if not res.ok:
+            raise HTTPException(status_code=400, detail=res.error)
+        await session.commit()
+        return {"deleted": True}
 
 # -------------------------
 # Zoom webhook

@@ -12,7 +12,6 @@ from urllib.parse import urlencode
 from datetime import datetime, timedelta
 from sqlalchemy.orm import selectinload
 import logging
-import structlog
 import uuid as _uuid_mod
 import contextvars
 # Add crypto utils for HMAC tokens
@@ -46,7 +45,8 @@ def _lazy_load_worker():  # late binding to prevent circular import
     if celery_app is None or sync_fireflies_meetings is None:
         from app import worker  # type: ignore
         celery_app = worker.celery_app
-        sync_fireflies_meetings = worker.sync_fireflies_meetings
+    sync_fireflies_meetings = worker.sync_fireflies_meetings
+    ingest_fireflies_transcripts = worker.ingest_fireflies_transcripts  # type: ignore
 from .config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_TOKEN_URL, GOOGLE_CALENDAR_EVENTS_URL
 
 # Import leads router
@@ -71,69 +71,19 @@ if FRONTEND_URL.startswith("https://"):
         # If FRONTEND_URL doesn't have www, add www version
         frontend_origins.append(FRONTEND_URL.replace("://", "://www."))
 
-logger = logging.getLogger("coachintel")
-logger.setLevel(logging.INFO)
-if not logger.hasHandlers():
-    # Base stdlib handler (structlog will wrap)
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(message)s"))
-    logger.addHandler(handler)
-
-# -------------------------
-# Structlog configuration
-# -------------------------
-structlog_context = {
-    "request_id": contextvars.ContextVar("request_id", default=None),
-    "coach_id": contextvars.ContextVar("coach_id", default=None),
-    "provider": contextvars.ContextVar("provider", default=None),
-}
-
-def _add_context(logger, method_name, event_dict):  # noqa: D401
-    rid = structlog_context["request_id"].get()
-    if rid:
-        event_dict["request_id"] = rid
-    cid = structlog_context["coach_id"].get()
-    if cid is not None:
-        event_dict["coach_id"] = cid
-    prov = structlog_context["provider"].get()
-    if prov:
-        event_dict["provider"] = prov
-    return event_dict
-
-structlog.configure(
-    processors=[
-        structlog.contextvars.merge_contextvars,
-        _add_context,
-        structlog.processors.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso", utc=True),
-        structlog.processors.dict_tracebacks,
-        structlog.processors.JSONRenderer(),
-    ],
-    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
-    cache_logger_on_first_use=True,
+from app.logging import (
+    slog,
+    set_log_coach,
+    set_log_provider,
+    set_log_request,
+    log_webhook_received,
+    log_meeting_upserted,
+    log_attendee_resolved,
+    log_tokens_refreshed,
 )
 
-slog = structlog.get_logger()
-
-def set_log_coach(coach_id: int | None):  # utility binder
-    structlog_context["coach_id"].set(coach_id)
-
-def set_log_provider(provider: str | None):
-    structlog_context["provider"].set(provider)
-
-def log_webhook_received(provider: str, status: str, detail: str | None = None, **extra):
-    slog.info("webhook_received", provider=provider, status=status, detail=detail, **extra)
-
-def log_meeting_upserted(meeting_id: str, coach_id: int, source: str, created: bool, **extra):
-    slog.info("meeting_upserted", meeting_id=meeting_id, coach_id=coach_id, source=source, created=created, **extra)
-
-def log_attendee_resolved(raw_email: str | None, person_id: str | None, matched: bool, **extra):
-    slog.info("attendee_resolved", raw_email=raw_email, person_id=person_id, matched=matched, **extra)
-
-def log_tokens_refreshed(coach_id: int, provider: str, success: bool, rotated: bool | None = None, **extra):
-    slog.info("tokens_refreshed", coach_id=coach_id, provider=provider, success=success, rotated=rotated, **extra)
-
 # Log CORS configuration for debugging
+logger = logging.getLogger("coachintel")
 logger.info(f"CORS configured for origins: {['http://localhost:3000', 'http://127.0.0.1:3000'] + frontend_origins}")
 
 app = FastAPI(
@@ -188,21 +138,34 @@ async def trust_proxy_headers(request: Request, call_next):
 @app.middleware("http")
 async def request_id_and_context(request: Request, call_next):
     rid = request.headers.get("x-request-id") or str(_uuid_mod.uuid4())
-    structlog_context["request_id"].set(rid)
+    set_log_request(rid)
     # infer provider from webhook path early
     path = request.url.path.lower()
     if path.startswith("/webhooks/"):
         parts = path.split("/")
         if len(parts) > 2:
-            structlog_context["provider"].set(parts[2])
+            set_log_provider(parts[2])
     try:
         response = await call_next(request)
         response.headers.setdefault("X-Request-Id", rid)
         return response
     finally:
-        # clear context for safety (new context per request anyway)
-        structlog_context["coach_id"].set(None)
-        structlog_context["provider"].set(None)
+            # clear context for safety (new context per request anyway)
+            set_log_coach(None)
+            set_log_provider(None)
+
+@app.get("/health/lazy-worker")
+async def health_lazy_worker():
+    """Health endpoint to verify Celery lazy loader functions without circular import.
+
+    Returns JSON indicating whether the celery app object could be loaded.
+    """
+    try:
+        _lazy_load_worker()
+        loaded = celery_app is not None
+        return {"status": "ok", "celery_loaded": loaded}
+    except Exception as e:  # pragma: no cover - defensive
+        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
 
 # Password hashing setup
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -1506,37 +1469,86 @@ async def get_user_meetings(user: User = Depends(verify_jwt_user)):
         return {"meetings": meeting_list}
 
 @app.post("/sync/external-meetings")
-async def sync_external_meetings(source: str = Query(..., description="fireflies or zoom"), user: User = Depends(verify_jwt_user)):
+async def sync_external_meetings(
+    source: str = Query(..., description="fireflies | fireflies_transcripts | zoom | google"),
+    limit: int = Query(50, ge=1, le=500, description="Max items to ingest (where supported)"),
+    meeting_ids: List[str] | None = Body(None, description="Optional list of meeting IDs (zoom reports)"),
+    user: User = Depends(verify_jwt_user),
+):
+    """Dispatch provider-specific ingestion tasks for the authenticated coach.
+
+    Supported sources:
+      - fireflies:      legacy meeting + transcript sync (per-user API key) [deprecated]
+      - fireflies_transcripts: attendee/client enrichment from transcripts (preferred)
+      - zoom:           zoom reports for provided meeting_ids
+      - google:         calendar window sync (24h back -> +7d forward)
+
+    Returns JSON with task_id and source.
     """
-    Trigger background sync of Fireflies or Zoom meetings for the authenticated user.
-    Persists meetings to the database via Celery task.
-    Returns status and task ID.
-    """
-    # logger.info(f"[SYNC DEBUG] Sync requested for user: {user.email}, source: {source}")
-    # Get user profile
+    _lazy_load_worker()
     user_profile = await get_user_by_email(user.email)
     if not user_profile:
-        logger.error(f"[SYNC DEBUG] User not found: {user.email}")
-        return {"error": "User not found"}
-    # Trigger Celery task
+        return JSONResponse(status_code=404, content={"error": "User not found"})
+
+    # Normalize alias
     if source == "fireflies":
+        # If API key missing, error early
         if not user_profile.fireflies_api_key:
-            logger.warning(f"[SYNC DEBUG] No Fireflies API key for user: {user.email}")
-            return {"error": "Fireflies API key not found"}
+            return JSONResponse(status_code=400, content={"error": "Fireflies API key not found"})
         try:
-            _lazy_load_worker()
             task = sync_fireflies_meetings.delay(user.email, user_profile.fireflies_api_key)  # type: ignore
+            return {"task_id": task.id, "status": "queued", "source": source, "mode": "legacy"}
         except Exception as e:
-            logger.error(f"[SYNC ERROR] Failed to enqueue Celery task: {e}")
-            raise HTTPException(status_code=503, detail="Task queue unavailable")
-        # logger.info(f"[SYNC DEBUG] Fireflies sync task triggered: {task.id}")
-        return {"status": "sync started", "task_id": task.id, "source": source}
-    elif source == "zoom":
-        logger.error(f"[SYNC DEBUG] Zoom sync is not implemented.")
-        return {"error": "Zoom sync is not implemented yet"}
-    else:
-        logger.error(f"[SYNC DEBUG] Invalid source: {source}")
-        return {"error": "Invalid source. Must be 'fireflies' or 'zoom'"}
+            raise HTTPException(status_code=503, detail=f"Task queue unavailable: {e}")
+
+    if source == "fireflies_transcripts":
+        if not user_profile.fireflies_api_key:
+            return JSONResponse(status_code=400, content={"error": "Fireflies API key not found"})
+        try:
+            from app import worker  # lazy
+            task = worker.ingest_fireflies_transcripts.delay(user.id, limit)  # type: ignore
+            return {"task_id": task.id, "status": "queued", "source": source}
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Task queue unavailable: {e}")
+
+    if source == "zoom":
+        if not meeting_ids:
+            return JSONResponse(status_code=400, content={"error": "meeting_ids required for zoom"})
+        try:
+            from app import worker
+            task = worker.sync_zoom_reports.delay(user.id, meeting_ids)  # type: ignore
+            return {"task_id": task.id, "status": "queued", "source": source, "count": len(meeting_ids)}
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Task queue unavailable: {e}")
+
+    if source == "google":
+        try:
+            from app import worker
+            task = worker.sync_google_calendar.delay(user.id)  # type: ignore
+            return {"task_id": task.id, "status": "queued", "source": source}
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Task queue unavailable: {e}")
+
+    return JSONResponse(status_code=400, content={"error": "Unsupported source"})
+
+
+@app.post("/sync/fireflies/transcripts")
+async def sync_fireflies_transcripts(limit: int = 200, user: User = Depends(verify_jwt_user)):
+    """Trigger Fireflies transcripts attendee ingestion for the authenticated coach.
+
+    This pushes a Celery task (ingest_fireflies_transcripts) that enumerates transcripts and upserts attendees into the client index.
+    """
+    try:
+        _lazy_load_worker()
+        if not user.fireflies_api_key:
+            return JSONResponse(status_code=400, content={"error": "Fireflies API key not configured"})
+        # ingest_fireflies_transcripts symbol bound during lazy load
+        from app import worker  # local import to access task function attribute if needed
+        task = worker.ingest_fireflies_transcripts.delay(user.id, limit)  # type: ignore
+        return {"task_id": task.id, "status": "queued"}
+    except Exception as e:
+        logger.warning(f"[FirefliesTranscriptsSync] error user={user.id}: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 @app.get("/sync/status/{task_id}")
 def get_sync_status(task_id: str, request: Request):

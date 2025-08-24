@@ -26,6 +26,8 @@ from app.services.calendar_sync import (
     upsert_zoom_meeting,
     upsert_fireflies_meetings,
     upsert_calendly_event,
+    start_google_watch,
+    stop_google_watch,
 )
 
 # Prefer a full Redis URL from env (e.g., Upstash rediss://...)
@@ -108,6 +110,12 @@ celery_app.conf.beat_schedule = {
         'schedule': crontab(minute=0, hour='*'),
         'args': ()
     },
+    # Fireflies attendee enrichment (transcripts -> client index) - runs less frequently
+    'ingest-fireflies-transcripts-2h': {
+        'task': 'worker.ingest_fireflies_transcripts',
+        'schedule': crontab(minute=15, hour='*/2'),
+        'args': ()
+    },
     'reconcile-meetings-nightly': {
         'task': 'worker.reconcile_meetings',
         'schedule': crontab(minute=0, hour='3'),  # 3am UTC nightly
@@ -121,6 +129,11 @@ celery_app.conf.beat_schedule = {
     'refresh-oauth-external-accounts-5m': {
         'task': 'worker.refresh_external_accounts',
         'schedule': crontab(minute='*/5'),
+        'args': ()
+    },
+    'rotate-google-calendar-watch-hourly': {
+        'task': 'worker.rotate_expiring_google_watch_channels',
+        'schedule': crontab(minute=30, hour='*'),
         'args': ()
     },
     # 'summarize-missing-transcripts-every-15-minutes': {
@@ -152,6 +165,90 @@ def zoom_ingest(payload: dict):  # type: ignore[override]
         logging.info("[ZoomIngest] payload=%s", json.dumps(payload))
     except Exception:
         logging.info("[ZoomIngest] payload (raw repr)=%r", payload)
+    # Attempt lightweight participant timing upsert if meeting UUID present
+    try:
+        event = payload.get('event') if isinstance(payload, dict) else None
+        if isinstance(payload, dict) and 'payload' in payload:
+            inner = payload.get('payload') or {}
+        else:
+            inner = payload
+        meeting_uuid = None
+        # Zoom webhook shapes vary; common keys:
+        #   payload.object.uuid, payload.object.id
+        obj = inner.get('object') if isinstance(inner, dict) else None
+        if isinstance(obj, dict):
+            meeting_uuid = obj.get('uuid') or obj.get('id')
+        if meeting_uuid:
+            from app.models import AsyncSessionLocal as _AsyncSessionLocal
+            from app.services.zoom_participants import get_past_participants, upsert_zoom_participants
+            async def _run():
+                async with _AsyncSessionLocal() as session:  # type: ignore
+                    from sqlalchemy import select
+                    from app.models_meeting_tracking import Meeting as MTMeeting
+                    import os, time, hashlib
+                    # Simple negative lookup cache (redis if available else in-memory)
+                    neg_ttl = int(os.getenv("ZOOM_UUID_NEGATIVE_TTL", "60"))
+                    cache_key = f"zoom:uuid:neg:{meeting_uuid}"
+                    skip = False
+                    try:
+                        from app.routers.webhooks import get_redis  # reuse lazy redis
+                        r = get_redis()
+                        if hasattr(r, 'get') and r.get(cache_key):
+                            skip = True
+                    except Exception:
+                        pass
+                    if skip:
+                        return 0
+                    # Locate meeting by stored zoom_meeting_uuid mapping
+                    stmt = select(MTMeeting).where(MTMeeting.external_refs['zoom_meeting_uuid'].astext == meeting_uuid)  # type: ignore
+                    mt = (await session.execute(stmt)).scalar_one_or_none()
+                    if not mt:
+                        # Optional fallback: try meeting id (numeric) inside webhook payload object.id
+                        # If present, attempt an upsert to create mapping.
+                        obj = inner.get('object') if isinstance(inner, dict) else None
+                        mid = None
+                        if isinstance(obj, dict):
+                            mid = obj.get('id') or obj.get('meeting_id')
+                        if mid:
+                            # Resolve coach via host_id (if present) and ExternalAccount.zoom_user_id
+                            host_id = obj.get('host_id') if isinstance(obj, dict) else None
+                            coach_id_for_upsert = None
+                            if host_id:
+                                from app.models_meeting_tracking import ExternalAccount as EA
+                                acct = (await session.execute(select(EA).where(EA.provider=='zoom', EA.zoom_user_id==host_id))).scalar_one_or_none()
+                                if acct:
+                                    coach_id_for_upsert = acct.coach_id
+                            if coach_id_for_upsert is not None:
+                                from app.services.calendar_sync import upsert_zoom_meeting
+                                try:
+                                    res = await upsert_zoom_meeting(session, coach_id=coach_id_for_upsert, meeting_id=str(mid))
+                                    if res.ok:
+                                        mt = (await session.execute(stmt)).scalar_one_or_none()
+                                except Exception:
+                                    await session.rollback()
+                        if not mt:
+                            # set negative cache
+                            try:
+                                r = get_redis()
+                                r.setex(cache_key, neg_ttl, "1")
+                            except Exception:
+                                pass
+                            return 0
+                    coach_id = mt.coach_id
+                    try:
+                        parts = await get_past_participants(session, coach_id, meeting_uuid)
+                        if not parts:
+                            return 0
+                        added = await upsert_zoom_participants(session, coach_id, meeting_uuid, parts)
+                        await session.commit()
+                        return added
+                    except Exception:
+                        await session.rollback()
+                        return 0
+            added = asyncio.run(_run())
+            logging.info("[ZoomIngest] participant_timing_upserted=%s uuid=%s", added, meeting_uuid)
+    except Exception as e:  # pragma: no cover
+        logging.warning("[ZoomIngest] timing ingestion failed: %s", e)
     return {"status": "ok"}
 
 @celery_app.task(name="fireflies_ingest")
@@ -458,6 +555,77 @@ def reconcile_meetings(coach_id: Optional[int] = None, lookback_hours: int = 168
                 return {"error": str(e), "scanned": scanned, "merged_components": merged_components, "merged_meetings": merged_meetings}
     return asyncio.run(_run())
 
+@celery_app.task
+def rotate_expiring_google_watch_channels(lead_time_minutes: int = 30) -> dict:
+    """Rotate (stop + start) Google Calendar watch channels expiring soon.
+
+    lead_time_minutes: channels whose expiration is within this window will be rotated.
+    Uses PUBLIC_WEBHOOK_BASE or API_BASE_URL env for webhook address.
+    """
+    async def _run() -> dict:
+        try:
+            from app.logging import slog
+        except Exception:  # pragma: no cover
+            slog = None  # type: ignore
+        from app.models_meeting_tracking import ExternalAccount
+        upcoming = datetime.datetime.utcnow() + datetime.timedelta(minutes=lead_time_minutes)
+        rotated = 0
+        failed: list[int] = []
+        checked = 0
+        async with AsyncSessionLocal() as session:  # type: ignore
+            stmt = select(ExternalAccount).where(
+                ExternalAccount.provider == 'google',
+                ExternalAccount.calendar_channel_id != None,  # noqa: E711
+                ExternalAccount.calendar_channel_expires != None,  # noqa: E711
+                ExternalAccount.calendar_channel_expires < upcoming,
+            )
+            accounts = (await session.execute(stmt)).scalars().all()
+            checked = len(accounts)
+            if slog:
+                try:
+                    slog.info("google_watch_rotate_scan", to_rotate=checked, lead_minutes=lead_time_minutes)
+                except Exception:
+                    pass
+            base = os.getenv('PUBLIC_WEBHOOK_BASE') or os.getenv('API_BASE_URL') or 'https://api.coachintel.ai'
+            address = base.rstrip('/') + '/webhooks/google'
+            for acct in accounts:
+                try:
+                    try:
+                        await stop_google_watch(session, coach_id=acct.coach_id)
+                    except Exception:
+                        pass
+                    res = await start_google_watch(session, coach_id=acct.coach_id, webhook_address=address)
+                    if not res.ok:
+                        failed.append(acct.coach_id)
+                        if slog:
+                            try:
+                                slog.warning("google_watch_rotate_failed", coach_id=acct.coach_id, error=res.error)
+                            except Exception:
+                                pass
+                        continue
+                    rotated += 1
+                    if slog:
+                        try:
+                            slog.info("google_watch_rotated", coach_id=acct.coach_id)
+                        except Exception:
+                            pass
+                except Exception as e:  # capture unexpected exception during rotation of a single account
+                    failed.append(acct.coach_id)
+                    if slog:
+                        try:
+                            slog.warning("google_watch_rotate_exception", coach_id=acct.coach_id, error=str(e))
+                        except Exception:
+                            pass
+            await session.commit()
+        summary = {"rotated": rotated, "failed": failed, "checked": checked}
+        if slog:
+            try:
+                slog.info("google_watch_rotate_summary", **summary)
+            except Exception:
+                pass
+        return summary
+    return asyncio.run(_run())
+
 
 @celery_app.task
 def refresh_external_accounts():
@@ -685,3 +853,51 @@ def sync_fireflies_meetings(self, user_email=None, api_key=None):
     finally:
         session.close()
     return {"status": "success"}
+
+
+@celery_app.task(name="ingest_fireflies_transcripts")
+def ingest_fireflies_transcripts(coach_id: int | None = None, limit: int = 200):
+    """Iterate Fireflies transcripts for one coach (or all) and upsert attendees into client index.
+
+    Uses new services.fireflies_transcripts list_transcripts + upsert_attendees_from_transcript.
+    limit: max transcripts per coach per run for safety.
+    """
+    async def _run():
+        from app.services.fireflies_transcripts import list_transcripts, get_transcript, upsert_attendees_from_transcript
+        processed = 0
+        coaches: list[int] = []
+        async with AsyncSessionLocal() as session:  # type: ignore
+            if coach_id is not None:
+                coaches = [coach_id]
+            else:
+                # select coaches with fireflies keys
+                rows = (await session.execute(select(User.id).where(User.fireflies_api_key.isnot(None)))).all()
+                coaches = [r[0] for r in rows]
+            for cid in coaches:
+                try:
+                    transcripts = await list_transcripts(session, user_id=cid, limit=limit)
+                except Exception as e:  # pragma: no cover
+                    logging.warning("[FirefliesTranscripts] list failed coach=%s err=%s", cid, e)
+                    continue
+                for t in transcripts:
+                    tid = t.get('id') if isinstance(t, dict) else None
+                    if not tid:
+                        continue
+                    # ensure full transcript (may include attendees already; we just reuse list version)
+                    transcript = t
+                    if not transcript.get('attendees'):
+                        try:
+                            full = await get_transcript(session, user_id=cid, transcript_id=tid)
+                            if full:
+                                transcript = full
+                        except Exception:
+                            pass
+                    try:
+                        added = await upsert_attendees_from_transcript(session, user_id=cid, transcript=transcript)
+                        if added:
+                            processed += added
+                    except Exception as e:  # pragma: no cover
+                        logging.warning("[FirefliesTranscripts] upsert attendees failed coach=%s tid=%s err=%s", cid, tid, e)
+                await session.commit()
+        return {"processed": processed, "coaches": len(coaches)}
+    return asyncio.run(_run())
