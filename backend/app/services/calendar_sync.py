@@ -1,35 +1,30 @@
-"""Calendar / events ingestion helpers.
+"""Calendar / events ingestion helpers using typed external clients.
 
-Functions:
- - list_events(coach_id, provider, time_min, time_max)
- - upsert_events_as_meetings(coach_id, provider, events)
+Public functions:
+ - list_events(session, coach_id, provider, time_min, time_max)
+ - upsert_events_as_meetings(session, coach_id, provider, events)
 
-Currently implemented provider: google (Calendar API events.list)
-Extensible for others (zoom, calendly, fireflies) by adding branches.
+Currently implemented provider path delegates to `GoogleCalendarClient`.
+Other providers (zoom, calendly, fireflies) can add analogous upsert logic.
 """
 from __future__ import annotations
 
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
+from datetime import datetime
 import logging
-import httpx
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models_meeting_tracking import ExternalAccount, Meeting
-from app.utils.crypto import fernet
-from app.services.oauth import refresh_if_needed, OAuthError
+from app.models_meeting_tracking import Meeting
 from app.repositories.meeting_tracking import add_or_update_attendee, resolve_attendee
+from app.clients.google_calendar_client import GoogleCalendarClient
+from app.clients.zoom_client import ZoomClient
+from app.clients.fireflies_client import FirefliesClient
+from app.clients.calendly_client import CalendlyClient
+from app.clients.result import Result, success, failure
 
 logger = logging.getLogger("calendar_sync")
-
-GOOGLE_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
-
-async def _get_external_account(session: AsyncSession, coach_id: int, provider: str) -> Optional[ExternalAccount]:
-    stmt = select(ExternalAccount).where(ExternalAccount.coach_id == coach_id, ExternalAccount.provider == provider)
-    return (await session.execute(stmt)).scalar_one_or_none()
-
 
 def _parse_rfc3339(dt_str: str | None) -> Optional[datetime]:
     if not dt_str:
@@ -37,53 +32,26 @@ def _parse_rfc3339(dt_str: str | None) -> Optional[datetime]:
     try:
         if dt_str.endswith('Z'):
             dt_str = dt_str[:-1] + '+00:00'
-        return datetime.fromisoformat(dt_str)
+        from datetime import datetime as _dt
+        return _dt.fromisoformat(dt_str)
     except Exception:
         return None
 
-async def list_events(session: AsyncSession, coach_id: int, provider: str, time_min: datetime, time_max: datetime, page_size: int = 100) -> List[Dict[str, Any]]:
+async def list_events(session: AsyncSession, coach_id: int, provider: str, time_min: datetime, time_max: datetime, page_size: int = 100) -> Result[List[Dict[str, Any]]]:
     provider = provider.lower()
-    acct = await _get_external_account(session, coach_id, provider)
-    if not acct or not acct.access_token_enc:
-        return []
-    f = fernet()
-    try:
-        access_token = f.decrypt(acct.access_token_enc.encode()).decode()
-    except Exception:
-        logger.warning("Failed to decrypt access token for account %s", getattr(acct, 'id', '?'))
-        return []
-    if acct.refresh_token_enc and acct.expires_at:
-        try:
-            refresh_plain = f.decrypt(acct.refresh_token_enc.encode()).decode()
-            upd = refresh_if_needed(provider, refresh_plain, int(acct.expires_at.timestamp()))
-            if upd:
-                access_token = upd['access_token']
-                acct.access_token_enc = f.encrypt(access_token.encode()).decode()
-                if upd.get('refresh_token') and upd['refresh_token'] != refresh_plain:
-                    acct.refresh_token_enc = f.encrypt(upd['refresh_token'].encode()).decode()
-                import datetime as _dt
-                acct.expires_at = _dt.datetime.utcfromtimestamp(upd['expires_at']).replace(tzinfo=_dt.timezone.utc)
-                acct.scopes = upd.get('scopes') or acct.scopes
-                await session.flush()
-        except OAuthError as e:
-            logger.warning("Token refresh failed for account %s: %s", getattr(acct, 'id', '?'), e)
     if provider == 'google':
-        params = {
-            'timeMin': time_min.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z'),
-            'timeMax': time_max.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z'),
-            'singleEvents': 'true',
-            'orderBy': 'startTime',
-            'maxResults': str(page_size),
-        }
-        headers = {"Authorization": f"Bearer {access_token}"}
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(GOOGLE_EVENTS_URL, params=params, headers=headers)
-        if resp.status_code >= 400:
-            logger.warning("Google events list failed %s: %s", resp.status_code, resp.text[:200])
-            return []
-        data = resp.json()
-        return data.get('items', [])
-    return []
+        try:
+            client = GoogleCalendarClient(session, coach_id)
+            events = await client.list_events(time_min, time_max, page_size)
+            # Convert typed events back to dict for backward compatibility
+            items: List[Dict[str, Any]] = []
+            for ev in events:
+                items.append(ev.raw)
+            return success(items)
+        except Exception as e:  # pragma: no cover
+            logger.warning("Google list_events error coach=%s: %s", coach_id, e)
+            return failure(str(e))
+    return failure(f"Provider {provider} not implemented")
 
 async def upsert_events_as_meetings(session: AsyncSession, coach_id: int, provider: str, events: List[Dict[str, Any]]) -> int:
     provider = provider.lower()
@@ -148,6 +116,208 @@ async def _process_event_attendees(session: AsyncSession, coach_id: int, meeting
         )
         await resolve_attendee(session, coach_id, ma)
 
+async def upsert_zoom_meeting(session: AsyncSession, coach_id: int, meeting_id: str) -> Result[Dict[str, Any]]:
+    """Fetch a Zoom meeting + participants and upsert into tracking tables.
+
+    Returns Result with summary counts.
+    """
+    client = ZoomClient(session, coach_id)
+    try:
+        meeting_raw = await client.get_meeting(meeting_id)
+        if not meeting_raw:
+            return failure("not_found", status_code=404)
+        # Parse fields
+        start = _parse_rfc3339(meeting_raw.get('start_time'))
+        dur_min = meeting_raw.get('duration')
+        end = None
+        if start and isinstance(dur_min, (int, float)):
+            from datetime import timedelta
+            end = start + timedelta(minutes=int(dur_min))
+        topic = meeting_raw.get('topic')
+        join_url = meeting_raw.get('join_url')
+        # Locate existing meeting
+        stmt = select(Meeting).where(
+            Meeting.coach_id == coach_id,
+            Meeting.external_refs['zoom_meeting_id'].astext == str(meeting_id)  # type: ignore
+        )
+        existing = (await session.execute(stmt)).scalar_one_or_none()
+        if existing:
+            m = existing
+            if start and (not m.started_at or start < m.started_at):
+                m.started_at = start
+            if end and (not m.ended_at or end > m.ended_at):
+                m.ended_at = end
+            if topic and not m.topic:
+                m.topic = topic
+            if join_url and not m.join_url:
+                m.join_url = join_url
+            refs = dict(m.external_refs or {})
+            refs.setdefault('zoom_meeting_id', str(meeting_id))
+            m.external_refs = refs
+        else:
+            m = Meeting(
+                coach_id=coach_id,
+                started_at=start,
+                ended_at=end,
+                topic=topic,
+                join_url=join_url,
+                platform='zoom',
+                external_refs={'zoom_meeting_id': str(meeting_id)},
+            )
+            session.add(m)
+            await session.flush()
+        # Participants
+        participants = await client.list_meeting_participants(meeting_id)
+        added = 0
+        for p in participants:
+            ident_email = p.email
+            display = p.name
+            if not (ident_email or display):
+                continue
+            att = await add_or_update_attendee(
+                session,
+                meeting_id=m.id,
+                source='zoom',
+                raw_email=ident_email,
+                raw_name=display,
+            )
+            await resolve_attendee(session, coach_id, att)
+            added += 1
+        return success({"meeting_id": str(m.id), "participants": added})
+    except Exception as e:  # pragma: no cover
+        logger.warning("upsert_zoom_meeting error coach=%s meeting=%s: %s", coach_id, meeting_id, e)
+        return failure(str(e))
+
+
+async def upsert_fireflies_meetings(session: AsyncSession, coach_id: int, limit: int = 25) -> Result[Dict[str, Any]]:
+    """List recent Fireflies meetings and upsert them with participants."""
+    client = FirefliesClient(session, coach_id)
+    try:
+        summaries = await client.list_meetings(limit=limit)
+        count = 0
+        part_total = 0
+        for summ in summaries:
+            start = _parse_rfc3339(summ.date)
+            end = None
+            if start and summ.duration:
+                from datetime import timedelta
+                end = start + timedelta(seconds=int(summ.duration))
+            stmt = select(Meeting).where(
+                Meeting.coach_id == coach_id,
+                Meeting.external_refs['fireflies_meeting_id'].astext == str(summ.id)  # type: ignore
+            )
+            existing = (await session.execute(stmt)).scalar_one_or_none()
+            if existing:
+                m = existing
+                if start and (not m.started_at or start < m.started_at):
+                    m.started_at = start
+                if end and (not m.ended_at or end > m.ended_at):
+                    m.ended_at = end
+                if summ.title and not m.topic:
+                    m.topic = summ.title
+                if summ.meeting_link and not m.join_url:
+                    m.join_url = summ.meeting_link
+                refs = dict(m.external_refs or {})
+                refs.setdefault('fireflies_meeting_id', summ.id)
+                m.external_refs = refs
+            else:
+                m = Meeting(
+                    coach_id=coach_id,
+                    started_at=start,
+                    ended_at=end,
+                    topic=summ.title,
+                    join_url=summ.meeting_link,
+                    platform='fireflies',
+                    external_refs={'fireflies_meeting_id': summ.id},
+                )
+                session.add(m)
+                await session.flush()
+            # participants
+            for p in summ.participants:
+                if not (p.email or p.name):
+                    continue
+                att = await add_or_update_attendee(
+                    session,
+                    meeting_id=m.id,
+                    source='fireflies',
+                    raw_email=p.email,
+                    raw_name=p.name,
+                )
+                await resolve_attendee(session, coach_id, att)
+                part_total += 1
+            count += 1
+        return success({"meetings": count, "participants": part_total})
+    except Exception as e:  # pragma: no cover
+        logger.warning("upsert_fireflies_meetings error coach=%s: %s", coach_id, e)
+        return failure(str(e))
+
+
+async def upsert_calendly_event(session: AsyncSession, coach_id: int, event_uuid: str, invitee_uuid: str | None = None) -> Result[Dict[str, Any]]:
+    """Fetch Calendly scheduled event + invitee (if provided) and upsert.
+
+    If invitee_uuid not provided, attempts to resolve from event payload (not implemented here).
+    """
+    client = CalendlyClient(session, coach_id)
+    try:
+        event = await client.get_scheduled_event(event_uuid)
+        if not event:
+            return failure("event_not_found", status_code=404)
+        invitee = None
+        if invitee_uuid:
+            invitee = await client.get_invitee(invitee_uuid)
+        start = _parse_rfc3339(event.start_time)
+        end = _parse_rfc3339(event.end_time)
+        stmt = select(Meeting).where(
+            Meeting.coach_id == coach_id,
+            Meeting.external_refs['calendly_event_uri'].astext == event.uri  # type: ignore
+        )
+        existing = (await session.execute(stmt)).scalar_one_or_none()
+        if existing:
+            m = existing
+            if start and (not m.started_at or start < m.started_at):
+                m.started_at = start
+            if end and (not m.ended_at or end > m.ended_at):
+                m.ended_at = end
+            if event.name and not m.topic:
+                m.topic = event.name
+            refs = dict(m.external_refs or {})
+            refs.setdefault('calendly_event_uri', event.uri)
+            if invitee and invitee.uuid:
+                refs.setdefault('calendly_invitee_uuid', invitee.uuid)
+            m.external_refs = refs
+        else:
+            refs = {'calendly_event_uri': event.uri}
+            if invitee and invitee.uuid:
+                refs['calendly_invitee_uuid'] = invitee.uuid
+            m = Meeting(
+                coach_id=coach_id,
+                started_at=start,
+                ended_at=end,
+                topic=event.name,
+                join_url=event.location,
+                platform='calendly',
+                external_refs=refs,
+            )
+            session.add(m)
+            await session.flush()
+        added = 0
+        if invitee:
+            att = await add_or_update_attendee(
+                session,
+                meeting_id=m.id,
+                source='calendly',
+                raw_email=invitee.email,
+                raw_name=invitee.name,
+            )
+            await resolve_attendee(session, coach_id, att)
+            added += 1
+        return success({"meeting_id": str(m.id), "attendees": added})
+    except Exception as e:  # pragma: no cover
+        logger.warning("upsert_calendly_event error coach=%s event=%s: %s", coach_id, event_uuid, e)
+        return failure(str(e))
+
+
 __all__ = [
-    'list_events', 'upsert_events_as_meetings'
+    'list_events', 'upsert_events_as_meetings',
+    'upsert_zoom_meeting', 'upsert_fireflies_meetings', 'upsert_calendly_event'
 ]

@@ -22,5 +22,10 @@ bcrypt
 passlib[bcrypt]
 pydantic[email]
 pydantic-settings
+pytest
+pytest-asyncio
+httpx
+anyio
+respx
 # optional SMS provider
 # twilio

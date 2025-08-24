@@ -40,6 +40,7 @@ from .config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_TOKEN_URL, GO
 # Import leads router
 from app.routers.leads import router as leads_router
 from app.routers.webhooks import router as webhooks_router
+from app.routers.clients import router as clients_router
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.meeting_tracking import list_review_candidates, resolve_review_candidate
 from uuid import UUID as _UUID
@@ -298,6 +299,82 @@ class LeadOut(BaseModel):
     class Config:
         from_attributes = True
 
+
+# JWT/session verification dependency
+async def verify_jwt_user(request: Request):
+    # JWT/session verification dependency (placed before OAuth routes)
+
+
+    cookie_header = request.headers.get("cookie", "")
+    print(f"[Backend] verify_jwt_user - cookie_header: {cookie_header}")
+    
+    # Check for NextAuth session token
+    next_auth_token = None
+    session_token = None
+    user_token = None
+    
+    for cookie in cookie_header.split(";"):
+        cookie = cookie.strip()
+        if cookie.startswith("__Secure-next-auth.session-token="):
+            next_auth_token = cookie.split("__Secure-next-auth.session-token=")[1]
+            break
+        elif cookie.startswith("next-auth.session-token="):
+            next_auth_token = cookie.split("next-auth.session-token=")[1]
+            break
+        elif cookie.startswith("session="):
+            session_token = cookie.split("session=")[1]
+        elif cookie.startswith("user="):
+            user_token = cookie.split("user=")[1]
+    
+    # Try NextAuth token first
+    if next_auth_token:
+        print(f"[Backend] verify_jwt_user - Found NextAuth token: {next_auth_token[:20]}...")
+        # Prefer Authorization header bearer with email; fallback to x-user-email
+        auth_header = request.headers.get("authorization", "")
+        email_header = request.headers.get("x-user-email", "")
+        email = None
+        if auth_header.startswith("Bearer "):
+            email = auth_header.split("Bearer ")[1]
+        elif email_header:
+            email = email_header
+        if email:
+            user = await get_user_by_email(email)
+            if user:
+                print(f"[Backend] verify_jwt_user - Verified NextAuth user via headers: {user.email}")
+                return user
+        # If we had the cookie but no headers, treat as unauthenticated for now
+    
+    # Legacy session/user cookies
+    if session_token or user_token:
+        try:
+            payload = jwt.decode(user_token or session_token, SECRET_KEY, algorithms=[ALGORITHM])
+            email = payload.get("sub")
+            user = await get_user_by_email(email)
+            if user:
+                print(f"[Backend] verify_jwt_user - Successfully verified legacy user: {user.email}")
+                return user
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token expired")
+        except jwt.InvalidTokenError:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    
+    # Dev-friendly fallback: allow trusted header-based auth in non-production
+    if not os.getenv("RAILWAY_ENVIRONMENT"):
+    # Dev-friendly fallback: allow trusted header-based auth in non-production
+
+
+        email_header = request.headers.get("x-user-email", "")
+        auth_header = request.headers.get("authorization", "")
+        email = email_header or (auth_header.split("Bearer ")[1] if auth_header.startswith("Bearer ") else None)
+        if email:
+            user = await get_user_by_email(email)
+            if user:
+                print(f"[Backend] verify_jwt_user - Fallback header auth for {user.email}")
+                return user
+    print("[Backend] verify_jwt_user - No token found, raising 401")
+    raise HTTPException(status_code=401, detail="Not authenticated")
+
+
 @app.post("/crm/public/leads", response_model=LeadOut)
 async def create_public_lead(payload: LeadPublicIn, request: Request):
     """Public endpoint to capture waitlist leads without auth (org_id is null)."""
@@ -391,128 +468,94 @@ async def create_public_lead(payload: LeadPublicIn, request: Request):
 # Include leads router
 app.include_router(leads_router)
 app.include_router(webhooks_router)
+app.include_router(clients_router)
 
-# --------------------------------------------------
-# Review candidate API (minimal, auth TODO)
-# --------------------------------------------------
-class ReviewResolveIn(BaseModel):
-    survivor_id: str | None = None
-    mergee_id: str | None = None
-    dismiss: bool = False
+"""Review Candidate API (coach scoped)"""
+class ReviewCandidateOut(BaseModel):
+    id: str
+    coach_id: int
+    meeting_id: str | None = None
+    attendee_source: str | None = None
+    raw_email: str | None = None
+    raw_phone: str | None = None
+    raw_name: str | None = None
+    candidate_person_ids: List[str] = []
+    reason: str
+    status: str
+    created_at: datetime | None = None
 
-
-@app.get("/review/candidates")
-async def list_candidates(coach_id: int, limit: int = 100):  # TODO auth & coach resolution
-    async with AsyncSessionLocal() as session:  # reuse existing async engine factory
-        rows = await list_review_candidates(session, coach_id=coach_id, limit=limit)
-        return [
-            {
-                'id': str(r.id),
-                'coach_id': r.coach_id,
-                'person_a_id': str(r.person_a_id),
-                'person_b_id': str(r.person_b_id),
-                'meeting_id': str(r.meeting_id) if r.meeting_id else None,
-                'reason': r.reason,
-                'resolved': r.resolved,
-                'created_at': r.created_at.isoformat() if r.created_at else None,
-            } for r in rows
-        ]
-
-
-@app.post("/review/candidates/{candidate_id}/resolve")
-async def resolve_candidate(candidate_id: str, payload: ReviewResolveIn):  # TODO auth
+@app.get("/review/candidates", response_model=List[ReviewCandidateOut])
+async def list_candidates(limit: int = 100, status: str | None = 'open', user: User = Depends(verify_jwt_user)):
+    coach_id = user.id
     async with AsyncSessionLocal() as session:
-        survivor = payload.survivor_id and _UUID(payload.survivor_id)
-        mergee = payload.mergee_id and _UUID(payload.mergee_id)
-        cand, merged_person = await resolve_review_candidate(
+        rows = await list_review_candidates(session, coach_id=coach_id, limit=limit, status=status)
+        out: List[ReviewCandidateOut] = []
+        for r in rows:
+            out.append(ReviewCandidateOut(
+                id=str(r.id),
+                coach_id=r.coach_id,
+                meeting_id=str(r.meeting_id) if r.meeting_id else None,
+                attendee_source=r.attendee_source,
+                raw_email=r.raw_email,
+                raw_phone=r.raw_phone,
+                raw_name=r.raw_name,
+                candidate_person_ids=[str(pid) for pid in (r.candidate_person_ids or [])],
+                reason=r.reason,
+                status=r.status,
+                created_at=r.created_at,
+            ))
+        return out
+
+
+class ChoosePersonIn(BaseModel):
+    person_id: str
+
+@app.post("/review/candidates/{candidate_id}/choose_person")
+async def choose_person(candidate_id: str, payload: ChoosePersonIn, user: User = Depends(verify_jwt_user)):
+    async with AsyncSessionLocal() as session:
+        # Ensure candidate belongs to coach
+        from app.models_meeting_tracking import ReviewCandidate as RC
+        rc = (await session.execute(select(RC).where(RC.id == _UUID(candidate_id), RC.coach_id == user.id))).scalar_one_or_none()
+        if not rc:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+        cand = await resolve_review_candidate(
             session,
             candidate_id=_UUID(candidate_id),
-            survivor_id=survivor,
-            mergee_id=mergee,
-            dismiss=payload.dismiss,
+            chosen_person_id=_UUID(payload.person_id),
+            create_person=False,
         )
         await session.commit()
-        return {
-            'candidate': {
-                'id': str(cand.id), 'resolved': cand.resolved,
-                'person_a_id': str(cand.person_a_id), 'person_b_id': str(cand.person_b_id)
-            },
-            'survivor': (str(merged_person.id) if merged_person else None),
-        }
-
-# JWT/session verification dependency
-async def verify_jwt_user(request: Request):
-    # JWT/session verification dependency (placed before OAuth routes)
+        return {"id": str(cand.id), "status": cand.status}
 
 
-    cookie_header = request.headers.get("cookie", "")
-    print(f"[Backend] verify_jwt_user - cookie_header: {cookie_header}")
-    
-    # Check for NextAuth session token
-    next_auth_token = None
-    session_token = None
-    user_token = None
-    
-    for cookie in cookie_header.split(";"):
-        cookie = cookie.strip()
-        if cookie.startswith("__Secure-next-auth.session-token="):
-            next_auth_token = cookie.split("__Secure-next-auth.session-token=")[1]
-            break
-        elif cookie.startswith("next-auth.session-token="):
-            next_auth_token = cookie.split("next-auth.session-token=")[1]
-            break
-        elif cookie.startswith("session="):
-            session_token = cookie.split("session=")[1]
-        elif cookie.startswith("user="):
-            user_token = cookie.split("user=")[1]
-    
-    # Try NextAuth token first
-    if next_auth_token:
-        print(f"[Backend] verify_jwt_user - Found NextAuth token: {next_auth_token[:20]}...")
-        # Prefer Authorization header bearer with email; fallback to x-user-email
-        auth_header = request.headers.get("authorization", "")
-        email_header = request.headers.get("x-user-email", "")
-        email = None
-        if auth_header.startswith("Bearer "):
-            email = auth_header.split("Bearer ")[1]
-        elif email_header:
-            email = email_header
-        if email:
-            user = await get_user_by_email(email)
-            if user:
-                print(f"[Backend] verify_jwt_user - Verified NextAuth user via headers: {user.email}")
-                return user
-        # If we had the cookie but no headers, treat as unauthenticated for now
-    
-    # Legacy session/user cookies
-    if session_token or user_token:
-        try:
-            payload = jwt.decode(user_token or session_token, SECRET_KEY, algorithms=[ALGORITHM])
-            email = payload.get("sub")
-            user = await get_user_by_email(email)
-            if user:
-                print(f"[Backend] verify_jwt_user - Successfully verified legacy user: {user.email}")
-                return user
-        except jwt.ExpiredSignatureError:
-            raise HTTPException(status_code=401, detail="Token expired")
-        except jwt.InvalidTokenError:
-            raise HTTPException(status_code=401, detail="Invalid token")
-    
-    # Dev-friendly fallback: allow trusted header-based auth in non-production
-    if not os.getenv("RAILWAY_ENVIRONMENT"):
-    # Dev-friendly fallback: allow trusted header-based auth in non-production
+class CreatePersonIn(BaseModel):
+    # Optionally allow override raw fields (fallback to candidate raw_*)
+    email: str | None = None
+    phone: str | None = None
+    name: str | None = None
 
-
-        email_header = request.headers.get("x-user-email", "")
-        auth_header = request.headers.get("authorization", "")
-        email = email_header or (auth_header.split("Bearer ")[1] if auth_header.startswith("Bearer ") else None)
-        if email:
-            user = await get_user_by_email(email)
-            if user:
-                print(f"[Backend] verify_jwt_user - Fallback header auth for {user.email}")
-                return user
-    print("[Backend] verify_jwt_user - No token found, raising 401")
-    raise HTTPException(status_code=401, detail="Not authenticated")
+@app.post("/review/candidates/{candidate_id}/create_person")
+async def create_person_for_candidate(candidate_id: str, payload: CreatePersonIn, user: User = Depends(verify_jwt_user)):
+    async with AsyncSessionLocal() as session:
+        from app.models_meeting_tracking import ReviewCandidate as RC
+        rc = (await session.execute(select(RC).where(RC.id == _UUID(candidate_id), RC.coach_id == user.id))).scalar_one_or_none()
+        if not rc:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+        if payload.email:
+            rc.raw_email = payload.email.lower().strip()
+        if payload.phone:
+            rc.raw_phone = payload.phone
+        if payload.name:
+            rc.raw_name = payload.name
+        await session.flush()
+        cand = await resolve_review_candidate(
+            session,
+            candidate_id=_UUID(candidate_id),
+            chosen_person_id=None,
+            create_person=True,
+        )
+        await session.commit()
+        return {"id": str(cand.id), "status": cand.status}
 
 # --------------------------------------------------
 # OAuth endpoints (defined after verify_jwt_user to avoid forward ref issues)

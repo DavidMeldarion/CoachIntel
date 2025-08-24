@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
-from typing import Optional, Literal, Any, Dict
+from typing import Optional, Literal, Any, Dict, List
 import hmac, hashlib, json, os, time, logging
 import base64
 import uuid
 
 from app.worker import celery_app  # existing celery instance
+from app.models import AsyncSessionLocal
+from sqlalchemy import select
+from app.models_meeting_tracking import ExternalAccount
+from app.services.calendly_ingestion import handle_calendly_webhook
 
 try:
     import redis  # type: ignore
@@ -68,6 +72,8 @@ router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 class CalendlyEvent(BaseModel):
     event: Literal["invitee.created", "invitee.canceled"]
     payload: Dict[str, Any] = Field(default_factory=dict)
+    # Optional explicit coach targeting (fallback heuristic if absent)
+    coach_id: Optional[int] = None
 
 class ZoomEvent(BaseModel):
     event: str  # e.g. 'meeting.participant_joined', 'meeting.participant_left', 'meeting.ended'
@@ -113,15 +119,63 @@ def verify_zoom_signature(secret: str, ts: str | None, body_bytes: bytes, provid
     expected = f"v0={mac}"
     return hmac.compare_digest(expected, provided)
 
-# -------------------------
-# Celery enqueue wrappers
-# -------------------------
+#############################################
+# Utility helpers (enqueue, rate limit, auth)
+#############################################
 
 def enqueue(task_name: str, payload: dict):
     try:
         celery_app.send_task(task_name, args=[payload])
     except Exception as e:  # pragma: no cover - best effort
         logger.warning("Failed to enqueue %s: %s", task_name, e)
+
+
+def _redis_safe_exec(func, default):
+    try:
+        return func()
+    except Exception:  # pragma: no cover
+        return default
+
+
+def rate_limit(key: str, limit: int, window_sec: int) -> bool:
+    """Simple fixed-window rate limiter using Redis INCR/EXPIRE.
+
+    Returns True if allowed, False if over limit (or treat errors as allowed).
+    """
+    r = get_redis()
+    def _inner():
+        count = r.incr(key)
+        if count == 1:
+            try:
+                r.expire(key, window_sec)
+            except Exception:  # pragma: no cover
+                pass
+        return count <= limit
+    return _redis_safe_exec(_inner, True)
+
+
+def debounce(key: str, ttl_sec: int) -> bool:
+    """Return True if this key was seen recently (i.e., should debounce/skip)."""
+    r = get_redis()
+    def _inner():
+        if r.get(key):
+            return True
+        try:
+            r.setex(key, ttl_sec, "1")
+        except Exception:  # pragma: no cover
+            pass
+        return False
+    return _redis_safe_exec(_inner, False)
+
+
+def require_admin(token: str | None):
+    expected = os.getenv("ADMIN_API_TOKEN")
+    if not expected:
+        # If no token configured, deny by default (fail-closed) to avoid accidental exposure.
+        raise HTTPException(status_code=503, detail="Admin token not configured")
+    if token != expected:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
 
 # -------------------------
 # Calendly webhook
@@ -166,8 +220,40 @@ async def calendly_webhook(
     except Exception:  # pragma: no cover
         pass
 
-    enqueue("calendly_ingest", raw)
-    return {"accepted": True, "nonce": nonce}
+    # Provider-wide rate limit (per minute) before heavier DB lookups
+    rl_limit = int(os.getenv("WEBHOOK_RATE_LIMIT_PER_MINUTE", "300"))
+    if not rate_limit(f"rl:calendly:{int(time.time()//60)}", rl_limit, 60):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    # Short debounce window (handles rapid duplicate bursts distinct from long replay TTL)
+    debounce_ttl = int(os.getenv("CALENDLY_DEBOUNCE_SECONDS", "8"))
+    if debounce(f"db:calendly:{nonce}", debounce_ttl):
+        return {"accepted": True, "nonce": nonce, "debounced": True}
+
+    # Directly process using service layer (multi-account fan-out if coach unspecified)
+    results: List[Dict[str, Any]] = []
+    async with AsyncSessionLocal() as session:  # type: ignore
+        if body.coach_id:
+            acct_stmt = select(ExternalAccount).where(ExternalAccount.provider == 'calendly', ExternalAccount.coach_id == body.coach_id)
+        else:
+            acct_stmt = select(ExternalAccount).where(ExternalAccount.provider == 'calendly')
+        accounts = (await session.execute(acct_stmt)).scalars().all()
+        if not accounts:
+            # Fall back to enqueue for later (legacy) if no accounts resolved
+            enqueue("calendly_ingest", raw)
+            return {"accepted": True, "nonce": nonce, "processed": False, "reason": "no_accounts"}
+        for acct in accounts:
+            try:
+                res = await handle_calendly_webhook(session, acct.coach_id, raw)
+                if res.ok:
+                    await session.commit()
+                else:
+                    await session.rollback()
+                results.append({"coach_id": acct.coach_id, "ok": res.ok, "error": res.error, **(res.value or {})})
+            except Exception as e:  # pragma: no cover
+                await session.rollback()
+                results.append({"coach_id": acct.coach_id, "ok": False, "error": str(e)})
+    return {"accepted": True, "nonce": nonce, "results": results}
 
 # -------------------------
 # Zoom webhook
@@ -182,14 +268,76 @@ async def zoom_webhook(
     body_bytes = _canonical_json(body.model_dump())
     if secret and not verify_zoom_signature(secret, x_zm_request_timestamp, body_bytes, x_zm_signature):
         raise HTTPException(status_code=400, detail="Invalid zoom signature")
+    # Rate limit (provider global)
+    rl_limit = int(os.getenv("WEBHOOK_RATE_LIMIT_PER_MINUTE", "300"))
+    if not rate_limit(f"rl:zoom:{int(time.time()//60)}", rl_limit, 60):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    # Debounce based on hash (short TTL)
+    body_hash = hashlib.sha256(body_bytes).hexdigest()
+    debounce_ttl = int(os.getenv("ZOOM_DEBOUNCE_SECONDS", "5"))
+    if debounce(f"db:zoom:{body_hash}", debounce_ttl):
+        return {"accepted": True, "debounced": True}
     enqueue("zoom_ingest", body.model_dump())
-    return {"accepted": True}
+    return {"accepted": True, "hash": body_hash}
 
 # -------------------------
 # Fireflies webhook
 # -------------------------
 @router.post("/fireflies", status_code=202)
-async def fireflies_webhook(body: FirefliesEvent):
-    enqueue("fireflies_ingest", body.model_dump())
-    return {"accepted": True}
+async def fireflies_webhook(body: FirefliesEvent, limit: int = 25):
+    # Identify all coaches with fireflies external account and trigger recent ingestion
+    rl_limit = int(os.getenv("WEBHOOK_RATE_LIMIT_PER_MINUTE", "300"))
+    if not rate_limit(f"rl:fireflies:{int(time.time()//60)}", rl_limit, 60):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    raw_bytes = _canonical_json(body.model_dump())
+    body_hash = hashlib.sha256(raw_bytes).hexdigest()
+    debounce_ttl = int(os.getenv("FIREFLIES_DEBOUNCE_SECONDS", "5"))
+    if debounce(f"db:fireflies:{body_hash}", debounce_ttl):
+        return {"accepted": True, "debounced": True}
+    async with AsyncSessionLocal() as session:  # type: ignore
+        acct_stmt = select(ExternalAccount).where(ExternalAccount.provider == 'fireflies')
+        accounts = (await session.execute(acct_stmt)).scalars().all()
+        coach_ids = [a.coach_id for a in accounts]
+    for cid in coach_ids:
+        try:
+            celery_app.send_task('ingest_fireflies_recent', args=[cid, limit])
+        except Exception as e:  # pragma: no cover
+            logger.warning("Failed to enqueue fireflies ingestion for coach %s: %s", cid, e)
+    enqueue("fireflies_ingest", body.model_dump())  # legacy raw log ingestion
+    return {"accepted": True, "fanout": len(coach_ids)}
+
+
+# -------------------------
+# Manual ingestion trigger endpoint
+# -------------------------
+class IngestionTrigger(BaseModel):
+    provider: Literal['google','zoom','calendly','fireflies']
+    coach_id: int
+    since_iso: Optional[str] = None
+    meeting_ids: Optional[List[str]] = None
+    event_uuid: Optional[str] = None
+    invitee_uuid: Optional[str] = None
+    limit: Optional[int] = 25
+
+@router.post("/trigger", status_code=202)
+async def manual_ingest(
+    trigger: IngestionTrigger,
+    x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
+):
+    # AuthZ
+    require_admin(x_admin_token)
+    provider = trigger.provider.lower()
+    if provider == 'google':
+        celery_app.send_task('app.worker.sync_google_calendar', args=[trigger.coach_id, trigger.since_iso])
+    elif provider == 'zoom':
+        celery_app.send_task('app.worker.sync_zoom_reports', args=[trigger.coach_id, trigger.meeting_ids])
+    elif provider == 'fireflies':
+        celery_app.send_task('ingest_fireflies_recent', args=[trigger.coach_id, (trigger.limit or 25)])
+    elif provider == 'calendly':
+        if not trigger.event_uuid:
+            raise HTTPException(status_code=400, detail="event_uuid required for calendly provider")
+        celery_app.send_task('ingest_calendly_event', args=[trigger.coach_id, trigger.event_uuid, trigger.invitee_uuid])
+    else:  # pragma: no cover
+        raise HTTPException(status_code=400, detail="Unsupported provider")
+    return {"accepted": True, "provider": provider}
 

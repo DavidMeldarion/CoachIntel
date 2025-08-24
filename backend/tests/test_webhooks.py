@@ -1,9 +1,8 @@
 import json
 import os
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
-# Import app instance
 from app.main import app
 
 # Monkeypatch redis for deterministic replay tests

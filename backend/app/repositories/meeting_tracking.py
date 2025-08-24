@@ -503,8 +503,10 @@ __all__ = [
 from uuid import UUID as _UUID  # local alias
 from sqlalchemy import select as _select  # reuse
 
-async def list_review_candidates(session: AsyncSession, coach_id: int, limit: int = 100):
-    stmt = _select(ReviewCandidate).where(ReviewCandidate.coach_id == coach_id, ReviewCandidate.resolved == False)  # noqa: E712
+async def list_review_candidates(session: AsyncSession, coach_id: int, limit: int = 100, status: str | None = 'open'):
+    stmt = _select(ReviewCandidate).where(ReviewCandidate.coach_id == coach_id)
+    if status:
+        stmt = stmt.where(ReviewCandidate.status == status)
     stmt = stmt.order_by(ReviewCandidate.created_at.desc()).limit(limit)
     res = await session.execute(stmt)
     return res.scalars().all()
@@ -513,16 +515,47 @@ async def list_review_candidates(session: AsyncSession, coach_id: int, limit: in
 async def resolve_review_candidate(
     session: AsyncSession,
     candidate_id: _UUID,
-    survivor_id: _UUID | None = None,
-    mergee_id: _UUID | None = None,
-    dismiss: bool = False,
+    chosen_person_id: _UUID | None = None,
+    create_person: bool = False,
 ):
     cand = (await session.execute(_select(ReviewCandidate).where(ReviewCandidate.id == candidate_id))).scalar_one()
-    cand.resolved = True
-    survivor = None
-    if not dismiss:
-        if not (survivor_id and mergee_id) or survivor_id == mergee_id:
-            raise ValueError("Must provide distinct survivor_id and mergee_id or set dismiss=True")
-        survivor = await merge_persons(session, survivor_id, mergee_id)
+    if cand.status == 'resolved':  # idempotent
+        return cand
+    person_id = None
+    if chosen_person_id:
+        person_id = chosen_person_id
+    elif create_person:
+        # create a new person from raw fields
+        email = cand.raw_email.lower().strip() if cand.raw_email else None
+        phone = cand.raw_phone
+        person = Person(
+            primary_email=email,
+            primary_phone=phone,
+            emails=[email] if email else [],
+            email_hashes=[hash_email(email)] if email else [],
+            phones=[phone] if phone else [],
+            phone_hashes=[hash_phone(phone)] if phone else [],
+        )
+        session.add(person)
+        await session.flush()
+        person_id = person.id
+    else:
+        raise ValueError("Must provide chosen_person_id or set create_person=True")
+
+    # Attach to meeting attendee if meeting + raw identity present
+    if cand.meeting_id:
+        stmt = select(MeetingAttendee).where(MeetingAttendee.meeting_id == cand.meeting_id)
+        rows = (await session.execute(stmt)).scalars().all()
+        target = None
+        for a in rows:
+            ident = a.external_attendee_id or a.raw_email or a.raw_name
+            desired = cand.raw_email or cand.raw_name
+            if ident and desired and ident.lower() == desired.lower():
+                target = a
+                break
+        if target and target.person_id != person_id:
+            target.person_id = person_id
+            await session.flush()
+    cand.status = 'resolved'
     await session.flush()
-    return cand, survivor
+    return cand

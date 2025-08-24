@@ -20,7 +20,13 @@ import json
 from app.services.oauth import refresh_if_needed, OAuthError
 from app.utils.crypto import fernet
 from app.models_meeting_tracking import ExternalAccount, Meeting as MTMeeting
-from app.services.calendar_sync import list_events, upsert_events_as_meetings
+from app.services.calendar_sync import (
+    list_events,
+    upsert_events_as_meetings,
+    upsert_zoom_meeting,
+    upsert_fireflies_meetings,
+    upsert_calendly_event,
+)
 
 # Prefer a full Redis URL from env (e.g., Upstash rediss://...)
 ENV_REDIS_URL = os.getenv("REDIS_URL") or os.getenv("UPSTASH_REDIS_URL")
@@ -158,6 +164,40 @@ def fireflies_ingest(payload: dict):  # type: ignore[override]
 
 
 # -------------------------------------------------
+# Provider ingestion tasks (Calendly / Fireflies orchestrators)
+# -------------------------------------------------
+
+@celery_app.task(name="ingest_calendly_event")
+def ingest_calendly_event(coach_id: int, event_uuid: str, invitee_uuid: str | None = None):
+    """Idempotent Calendly event + invitee upsert wrapper."""
+    async def _run():
+        async with AsyncSessionLocal() as session:  # type: ignore
+            from app.services.calendar_sync import upsert_calendly_event
+            res = await upsert_calendly_event(session, coach_id, event_uuid, invitee_uuid)
+            if res.ok:
+                await session.commit()
+            else:
+                await session.rollback()
+            return {"ok": res.ok, "error": res.error, **(res.value or {})}
+    return asyncio.run(_run())
+
+
+@celery_app.task(name="ingest_fireflies_recent")
+def ingest_fireflies_recent(coach_id: int, limit: int = 25):
+    """Fetch recent Fireflies meetings and upsert."""
+    async def _run():
+        async with AsyncSessionLocal() as session:  # type: ignore
+            from app.services.calendar_sync import upsert_fireflies_meetings
+            res = await upsert_fireflies_meetings(session, coach_id, limit)
+            if res.ok:
+                await session.commit()
+            else:
+                await session.rollback()
+            return {"ok": res.ok, "error": res.error, **(res.value or {})}
+    return asyncio.run(_run())
+
+
+# -------------------------------------------------
 # Calendar & meeting sync / reconciliation tasks
 # -------------------------------------------------
 
@@ -190,7 +230,10 @@ def sync_google_calendar(coach_id: int, since_iso: Optional[str] = None):
         future = now + datetime.timedelta(days=7)
         async with AsyncSessionLocal() as session:  # type: ignore
             try:
-                events = await list_events(session, coach_id, 'google', start, future)
+                events_res = await list_events(session, coach_id, 'google', start, future)
+                if not events_res.ok:
+                    return {"error": events_res.error or "list_failed"}
+                events = events_res.value or []
                 inserted = await upsert_events_as_meetings(session, coach_id, 'google', events)
                 await session.commit()
                 return {"events": len(events), "upserted": inserted}
@@ -202,18 +245,22 @@ def sync_google_calendar(coach_id: int, since_iso: Optional[str] = None):
 
 
 @celery_app.task
-def sync_zoom_reports(coach_id: int, window_hours: int = 24):
-    """Placeholder Zoom reports ingestion.
+def sync_zoom_reports(coach_id: int, meeting_ids: Optional[List[str]] = None):
+    """Zoom ingestion using typed client.
 
-    TODO: Implement actual Zoom API calls (meetings, participants) once OAuth scope + endpoint solidified.
-    For now, logs intent & returns stub structure for visibility.
+    If meeting_ids provided, upsert those; otherwise no-op placeholder.
     """
-    logging.info("[sync_zoom_reports] coach=%s window_hours=%s (NOT IMPLEMENTED)", coach_id, window_hours)
-    # Future implementation sketch (async like google):
-    #  - list past meetings via Zoom API /report/meetings or /users/me/meetings
-    #  - upsert by zoom_meeting_id into external_refs
-    #  - attach attendees similar to calendar attendees
-    return {"status": "not_implemented"}
+    async def _run() -> dict:
+        if not meeting_ids:
+            return {"status": "no_meetings_specified"}
+        results = []
+        async with AsyncSessionLocal() as session:  # type: ignore
+            for mid in meeting_ids:
+                res = await upsert_zoom_meeting(session, coach_id, mid)
+                results.append({"meeting_id": mid, "ok": res.ok, "error": res.error, **(res.value or {})})
+            await session.commit()
+        return {"processed": len(results), "results": results}
+    return asyncio.run(_run())
 
 
 @celery_app.task
@@ -249,7 +296,7 @@ def reconcile_meetings(coach_id: Optional[int] = None, lookback_hours: int = 168
                 meetings: List[MTMeeting] = (await session.execute(stmt)).scalars().all()
                 scanned = len(meetings)
                 if not meetings:
-                    return {"scanned": 0, "merged_meetings": 0, "merged_components": 0}
+                    return {"scanned": 0, "merged_meetings": 0, "merged_components": 0, "status": "ok"}
 
                 # Build adjacency graph
                 adj: Dict[str, Set[str]] = defaultdict(set)
@@ -403,6 +450,7 @@ def reconcile_meetings(coach_id: Optional[int] = None, lookback_hours: int = 168
                     "scanned": scanned,
                     "merged_components": merged_components,
                     "merged_meetings": merged_meetings,
+                    "status": "ok",
                 }
             except Exception as e:  # pragma: no cover
                 await session.rollback()

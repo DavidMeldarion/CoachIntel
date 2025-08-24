@@ -1,31 +1,15 @@
-import asyncio
 import pytest
-from uuid import uuid4
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 
-from app.models_meeting_tracking import Base, Person, Client, Meeting, MeetingAttendee, ReviewCandidate
+from app.models_meeting_tracking import Person, Client, Meeting, MeetingAttendee, ReviewCandidate
 from app.repositories.meeting_tracking import (
     get_or_create_person_by_email, get_or_create_person_by_phone, enrich_person,
     resolve_attendee, ensure_client, add_or_update_attendee, merge_persons
 )
 
-DATABASE_URL = "sqlite+aiosqlite:///:memory:"
-
-@pytest.fixture(scope="module")
-async def engine():
-    eng = create_async_engine(DATABASE_URL, future=True)
-    async with eng.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield eng
-    await eng.dispose()
-
 @pytest.fixture
-async def session(engine):
-    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    async with async_session() as s:
-        yield s
+async def session(db_session):  # reuse global fixture provided by conftest
+    yield db_session
 
 @pytest.mark.asyncio
 async def test_get_or_create_person_by_email(session):

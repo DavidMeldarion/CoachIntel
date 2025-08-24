@@ -36,6 +36,7 @@ class Base(DeclarativeBase):  # separate base to avoid clashing with existing le
 # Enums
 # ---------------------------------------------------------------------------
 ClientStatusEnum = SAEnum("prospect", "active", "inactive", name="client_status")
+ReviewCandidateStatusEnum = SAEnum("open", "resolved", name="review_candidate_status")
 
 # ---------------------------------------------------------------------------
 # Models
@@ -172,35 +173,48 @@ class MeetingAttendee(Base):
 
 
 class ReviewCandidate(Base):
-    """Potential person merge / identity conflict candidates for manual review.
+    """Identity ambiguity / enrichment candidate for manual resolution.
 
-    Records two person IDs that might represent the same real-world individual along with
-    the triggering context (meeting / attendee / reason).
+    Captures raw attendee data plus zero or more possible Person IDs.
+    User can choose an existing candidate person or create a new one.
     """
     __tablename__ = "review_candidates"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     coach_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
-    person_a_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("persons.id", ondelete="CASCADE"), nullable=False)
-    person_b_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("persons.id", ondelete="CASCADE"), nullable=False)
     meeting_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("meetings.id", ondelete="SET NULL"), nullable=True)
-    source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    attendee_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    raw_email: Mapped[Optional[str]] = mapped_column(CITEXT(), nullable=True)
+    raw_phone: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    raw_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    candidate_person_ids: Mapped[List[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), server_default=text("'{}'"), nullable=False)
     reason: Mapped[str] = mapped_column(String, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    resolved: Mapped[bool] = mapped_column(default=False, nullable=False)
+    status: Mapped[str] = mapped_column(ReviewCandidateStatusEnum, nullable=False, server_default=text("'open'"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
 
     __table_args__ = (
-        UniqueConstraint("coach_id", "person_a_id", "person_b_id", "meeting_id", name="uq_review_candidate_pair"),
-        Index("ix_review_candidates_coach_created", "coach_id", "created_at"),
+        Index("ix_review_candidates_coach_status_created", "coach_id", "status", "created_at"),
     )
 
-    def __repr__(self) -> str:  # pragma: no cover - repr utility
-        return f"<ReviewCandidate coach_id={self.coach_id} a={self.person_a_id} b={self.person_b_id} resolved={self.resolved}>"
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<ReviewCandidate id={self.id} coach_id={self.coach_id} status={self.status} email={self.raw_email!r}>"
 
 
-# ---------------------------------------------------------------------------
-# Extension requirements note: ensure 'citext' extension exists (Alembic migration).
-# ---------------------------------------------------------------------------
-# Example Alembic snippet (NOT executed here):
-#   op.execute("CREATE EXTENSION IF NOT EXISTS citext")
-# ---------------------------------------------------------------------------
+class ClientStatusAudit(Base):
+    """Audit log for client status changes."""
+    __tablename__ = "client_status_audits"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    client_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), index=True, nullable=False)
+    coach_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    old_status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    new_status: Mapped[str] = mapped_column(ClientStatusEnum, nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    reason: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    __table_args__ = (
+        Index("ix_client_status_audits_client_changed", "client_id", "changed_at"),
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<ClientStatusAudit client_id={self.client_id} old={self.old_status} new={self.new_status}>"
