@@ -108,7 +108,10 @@ async def handle_invitee_canceled(session: AsyncSession, coach_id: int, payload:
         return success({'canceled': True, 'meeting_found': False})
     from sqlalchemy import select
     from app.models_meeting_tracking import Meeting
-    stmt = select(Meeting).where(Meeting.coach_id==coach_id, Meeting.external_refs['calendly_event_id'].astext==event_uuid)  # type: ignore
+    stmt = select(Meeting).where(
+        Meeting.coach_id==coach_id,
+        Meeting.external_refs.op('->>')('calendly_event_id')==event_uuid
+    )
     m = (await session.execute(stmt)).scalar_one_or_none()
     if not m:
         return success({'canceled': True, 'meeting_found': False})

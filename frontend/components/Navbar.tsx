@@ -78,6 +78,7 @@ export default function Navbar() {
           <>
             <Link href="/dashboard" className="text-gray-700 font-medium hover:text-blue-700 transition">Dashboard</Link>
             <Link href="/timeline" className="text-gray-700 font-medium hover:text-blue-700 transition">Meeting Timeline</Link>
+            <Link href="/clients" className="text-gray-700 font-medium hover:text-blue-700 transition">Clients</Link>
             {canSeeAdmin && (
               <Link href="/admin/leads" className="text-gray-700 font-medium hover:text-blue-700 transition">Admin</Link>
             )}

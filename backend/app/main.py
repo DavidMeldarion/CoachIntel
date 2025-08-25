@@ -9,7 +9,7 @@ from pydantic import BaseModel, validator, Field, ValidationError
 from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
 import httpx
 from urllib.parse import urlencode
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import selectinload
 import logging
 import uuid as _uuid_mod
@@ -17,7 +17,7 @@ import contextvars
 # Add crypto utils for HMAC tokens
 import hmac, hashlib, base64
 from uuid import UUID as UUID_t
-from sqlalchemy import select, or_, func
+from sqlalchemy import select, or_, func, text
 # Import password hashing context
 from passlib.context import CryptContext
 # Added typing and external imports
@@ -36,6 +36,7 @@ from app.models import (
     UserOrgRole,  # added
 )
 from app.integrations import get_fireflies_meeting_details, test_fireflies_api_key
+from app.deps import get_current_user  # unified auth dependency
 # Delayed import of celery worker to avoid circular import during module initialization
 celery_app = None
 sync_fireflies_meetings = None
@@ -594,7 +595,7 @@ class ReviewCandidateOut(BaseModel):
     created_at: datetime | None = None
 
 @app.get("/review/candidates", response_model=List[ReviewCandidateOut])
-async def list_candidates(limit: int = 100, status: str | None = 'open', user: User = Depends(verify_jwt_user)):
+async def list_candidates(limit: int = 100, status: str | None = 'open', user: User = Depends(get_current_user)):
     coach_id = user.id
     async with AsyncSessionLocal() as session:
         rows = await list_review_candidates(session, coach_id=coach_id, limit=limit, status=status)
@@ -620,7 +621,7 @@ class ChoosePersonIn(BaseModel):
     person_id: str
 
 @app.post("/review/candidates/{candidate_id}/choose_person")
-async def choose_person(candidate_id: str, payload: ChoosePersonIn, user: User = Depends(verify_jwt_user)):
+async def choose_person(candidate_id: str, payload: ChoosePersonIn, user: User = Depends(get_current_user)):
     async with AsyncSessionLocal() as session:
         # Ensure candidate belongs to coach
         from app.models_meeting_tracking import ReviewCandidate as RC
@@ -644,7 +645,7 @@ class CreatePersonIn(BaseModel):
     name: str | None = None
 
 @app.post("/review/candidates/{candidate_id}/create_person")
-async def create_person_for_candidate(candidate_id: str, payload: CreatePersonIn, user: User = Depends(verify_jwt_user)):
+async def create_person_for_candidate(candidate_id: str, payload: CreatePersonIn, user: User = Depends(get_current_user)):
     async with AsyncSessionLocal() as session:
         from app.models_meeting_tracking import ReviewCandidate as RC
         rc = (await session.execute(select(RC).where(RC.id == _UUID(candidate_id), RC.coach_id == user.id))).scalar_one_or_none()
@@ -677,7 +678,7 @@ EXPECTED_SCOPES = {
 }
 
 @app.get("/oauth/{provider}/start")
-async def oauth_start(provider: str, user: User = Depends(verify_jwt_user)):
+async def oauth_start(provider: str, user: User = Depends(get_current_user)):
     try:
         url = build_auth_url(provider, user.id)
         return RedirectResponse(url)
@@ -692,7 +693,7 @@ class OAuthCallbackOut(BaseModel):
 
 
 @app.get("/oauth/{provider}/callback", response_model=OAuthCallbackOut)
-async def oauth_callback(provider: str, code: str | None = None, state: str | None = None, error: str | None = None, user: User = Depends(verify_jwt_user)):
+async def oauth_callback(provider: str, code: str | None = None, state: str | None = None, error: str | None = None, user: User = Depends(get_current_user)):
     if error:
         raise HTTPException(status_code=400, detail=error)
     if not code:
@@ -811,7 +812,7 @@ def _require_admin(user: User):
         raise HTTPException(status_code=403, detail="Forbidden")
 
 @app.post("/invites", response_model=InviteOut)
-async def create_invite(body: InviteCreateIn, user: User = Depends(verify_jwt_user)):
+async def create_invite(body: InviteCreateIn, user: User = Depends(get_current_user)):
     _require_admin(user)
     try:
         # Ensure the email exists as a lead (gatekeeping: waitlist vetted)
@@ -875,7 +876,7 @@ async def redeem_invite(body: InviteRedeemIn):
 async def get_meeting_details(
     source: str,
     meeting_id: str,
-    user: User = Depends(verify_jwt_user)
+    user: User = Depends(get_current_user)
 ):
     """
     Get detailed information for a specific meeting.
@@ -1188,7 +1189,7 @@ async def google_oauth_callback(request: Request, code: str, state: str = None):
     return response
 
 @app.get("/calendar/events")
-async def get_calendar_events(user: User = Depends(verify_jwt_user)):
+async def get_calendar_events(user: User = Depends(get_current_user)):
     access_token, refresh_token, expiry = user.get_google_tokens()
     if not access_token:
         raise HTTPException(status_code=401, detail="No Google Calendar token")
@@ -1253,11 +1254,10 @@ async def nextauth_sync(request: Request):
         google_token_expiry = None
         if google_token_expiry_str:
             try:
-                # Parse the datetime with timezone and convert to UTC naive datetime
+                # Normalize Z suffix to +00:00, parse, convert to naive UTC datetime
                 google_token_expiry = datetime.fromisoformat(google_token_expiry_str.replace('Z', '+00:00'))
-                # Convert to UTC and remove timezone info for database storage
-                google_token_expiry = google_token_expiry.utctimetuple()
-                google_token_expiry = datetime(*google_token_expiry[:6])
+                if google_token_expiry.tzinfo:
+                    google_token_expiry = google_token_expiry.astimezone(timezone.utc).replace(tzinfo=None)
             except ValueError:
                 print(f"[Backend] Invalid expiry date format: {google_token_expiry_str}")
         
@@ -1266,7 +1266,7 @@ async def nextauth_sync(request: Request):
         first_name = name_parts[0] if name_parts else ''
         last_name = name_parts[1] if len(name_parts) > 1 else ''
         
-        # Get or create user
+        # Get or create user (and ensure a Google ExternalAccount row is present)
         user = await get_user_by_email(email)
         if user:
             print(f"[Backend] Updating existing user: {email}")
@@ -1281,6 +1281,34 @@ async def nextauth_sync(request: Request):
             
             async with AsyncSessionLocal() as session:
                 session.add(user)
+                # Upsert ExternalAccount for Google (used by meeting ingestion)
+                if google_access_token:
+                    # Always use raw SQL upsert to avoid cross-metadata FK mapping issues.
+                    try:
+                        from app.utils.crypto import fernet as _fernet
+                        f = _fernet()
+                        enc_access = f.encrypt(google_access_token.encode()).decode()
+                        enc_refresh = f.encrypt(google_refresh_token.encode()).decode() if google_refresh_token else None
+                        expires_at_dt = google_token_expiry if isinstance(google_token_expiry, datetime) else None
+                        raw = text("""
+                            INSERT INTO external_accounts (id, coach_id, provider, access_token_enc, refresh_token_enc, scopes, expires_at)
+                            VALUES (gen_random_uuid(), :coach_id, 'google', :acc, :ref, :scopes, :exp)
+                            ON CONFLICT (coach_id, provider)
+                            DO UPDATE SET access_token_enc = EXCLUDED.access_token_enc,
+                                          refresh_token_enc = COALESCE(EXCLUDED.refresh_token_enc, external_accounts.refresh_token_enc),
+                                          scopes = EXCLUDED.scopes,
+                                          expires_at = EXCLUDED.expires_at;
+                        """)
+                        await session.execute(raw, {
+                            'coach_id': user.id,
+                            'acc': enc_access,
+                            'ref': enc_refresh,
+                            'scopes': ['https://www.googleapis.com/auth/calendar.readonly'],
+                            'exp': expires_at_dt,
+                        })
+                        print(f"[Backend] ExternalAccount upsert (raw) ok for {email}")
+                    except Exception as _e:
+                        print(f"[Backend] ExternalAccount upsert (raw) failed for {email}: {_e}")
                 await session.commit()
         else:
             print(f"[Backend] Creating new user: {email}")
@@ -1299,6 +1327,33 @@ async def nextauth_sync(request: Request):
             
             async with AsyncSessionLocal() as session:
                 session.add(user)
+                await session.flush()  # ensure user.id
+                if google_access_token:
+                    try:
+                        from app.utils.crypto import fernet as _fernet
+                        f = _fernet()
+                        enc_access = f.encrypt(google_access_token.encode()).decode()
+                        enc_refresh = f.encrypt(google_refresh_token.encode()).decode() if google_refresh_token else None
+                        expires_at_dt = google_token_expiry if isinstance(google_token_expiry, datetime) else None
+                        raw = text("""
+                            INSERT INTO external_accounts (id, coach_id, provider, access_token_enc, refresh_token_enc, scopes, expires_at)
+                            VALUES (gen_random_uuid(), :coach_id, 'google', :acc, :ref, :scopes, :exp)
+                            ON CONFLICT (coach_id, provider)
+                            DO UPDATE SET access_token_enc = EXCLUDED.access_token_enc,
+                                          refresh_token_enc = COALESCE(EXCLUDED.refresh_token_enc, external_accounts.refresh_token_enc),
+                                          scopes = EXCLUDED.scopes,
+                                          expires_at = EXCLUDED.expires_at;
+                        """)
+                        await session.execute(raw, {
+                            'coach_id': user.id,
+                            'acc': enc_access,
+                            'ref': enc_refresh,
+                            'scopes': ['https://www.googleapis.com/auth/calendar.readonly'],
+                            'exp': expires_at_dt,
+                        })
+                        print(f"[Backend] ExternalAccount create (raw) ok for {email}")
+                    except Exception as _e:
+                        print(f"[Backend] ExternalAccount create (raw) failed for {email}: {_e}")
                 await session.commit()
         
         print(f"[Backend] NextAuth sync completed for user: {email}")
@@ -1332,7 +1387,7 @@ async def logout():
     return response
 
 @app.get("/me")
-async def get_current_user(user: User = Depends(verify_jwt_user)):
+async def get_current_user_profile(user: User = Depends(get_current_user)):
     print(f"[Backend] /me endpoint called for user: {user.email}")
     response = JSONResponse({
         "email": user.email,
@@ -1436,7 +1491,7 @@ async def update_user_profile(request: Request):
         raise HTTPException(status_code=500, detail="Failed to update user profile")
 
 @app.get("/meetings/")
-async def get_user_meetings(user: User = Depends(verify_jwt_user)):
+async def get_user_meetings(user: User = Depends(get_current_user)):
     # Query meetings for this user (and org if available)
     async with AsyncSessionLocal() as session:
         filters = [Meeting.user_id == user.id]
@@ -1473,7 +1528,7 @@ async def sync_external_meetings(
     source: str = Query(..., description="fireflies | fireflies_transcripts | zoom | google"),
     limit: int = Query(50, ge=1, le=500, description="Max items to ingest (where supported)"),
     meeting_ids: List[str] | None = Body(None, description="Optional list of meeting IDs (zoom reports)"),
-    user: User = Depends(verify_jwt_user),
+    user: User = Depends(get_current_user),
 ):
     """Dispatch provider-specific ingestion tasks for the authenticated coach.
 
@@ -1533,7 +1588,7 @@ async def sync_external_meetings(
 
 
 @app.post("/sync/fireflies/transcripts")
-async def sync_fireflies_transcripts(limit: int = 200, user: User = Depends(verify_jwt_user)):
+async def sync_fireflies_transcripts(limit: int = 200, user: User = Depends(get_current_user)):
     """Trigger Fireflies transcripts attendee ingestion for the authenticated coach.
 
     This pushes a Celery task (ingest_fireflies_transcripts) that enumerates transcripts and upserts attendees into the client index.
@@ -1586,7 +1641,7 @@ def get_sync_status(task_id: str, request: Request):
     })
 
 @app.get("/test-fireflies")
-async def test_fireflies_connection(user: User = Depends(verify_jwt_user)):
+async def test_fireflies_connection(user: User = Depends(get_current_user)):
     """
     Test Fireflies API key for the authenticated user by making a minimal API call.
     Returns success/failure based on Fireflies API response.
@@ -1600,7 +1655,7 @@ async def test_fireflies_connection(user: User = Depends(verify_jwt_user)):
     return {"success": True}
 
 @app.get("/meetings/{meeting_id}")
-async def get_meeting_with_transcript(meeting_id: str, user: User = Depends(verify_jwt_user)):
+async def get_meeting_with_transcript(meeting_id: str, user: User = Depends(get_current_user)):
     """
     Return meeting details and full transcript for a given meeting ID (for the authenticated user).
     Logs detailed errors if not found.
@@ -1672,7 +1727,7 @@ def require_plan(user: User, allowed: set[str]):
 
 
 @app.post("/summarize-missing-transcripts", status_code=status.HTTP_202_ACCEPTED)
-async def trigger_summarize_missing_transcripts(user: User = Depends(verify_jwt_user)):
+async def trigger_summarize_missing_transcripts(user: User = Depends(get_current_user)):
     """
     Trigger the Celery task to summarize all missing transcripts for eligible users.
     Requires plan: plus or pro.
@@ -1684,7 +1739,7 @@ async def trigger_summarize_missing_transcripts(user: User = Depends(verify_jwt_
     return {"task_id": result.id, "status": "started"}
 
 @app.post("/upload-audio/")
-async def upload_audio(file: UploadFile = File(...), user: User = Depends(verify_jwt_user)):
+async def upload_audio(file: UploadFile = File(...), user: User = Depends(get_current_user)):
     """Upload audio for transcription (Pro only)."""
     require_plan(user, {"pro"})
     try:
@@ -1697,7 +1752,7 @@ async def upload_audio(file: UploadFile = File(...), user: User = Depends(verify
       raise HTTPException(status_code=400, detail=f"Upload failed: {e}")
 
 @app.post("/transcribe/")
-async def transcribe(user: User = Depends(verify_jwt_user)):
+async def transcribe(user: User = Depends(get_current_user)):
     """Trigger transcription for an uploaded asset (Pro only)."""
     require_plan(user, {"pro"})
     # Not implemented yet; return 202 to indicate accepted
@@ -1773,7 +1828,7 @@ async def _is_org_admin(user_id: int, org_id: int) -> bool:
         return False
 
 @app.get("/orgs/{org_id}/admins")
-async def list_org_admins(org_id: int, user: User = Depends(verify_jwt_user)):
+async def list_org_admins(org_id: int, user: User = Depends(get_current_user)):
     # Allow site admins or org admins of this org
     if not bool(getattr(user, 'site_admin', False)) and not await _is_org_admin(user.id, org_id):
         raise HTTPException(status_code=403, detail="Forbidden")
@@ -1787,7 +1842,7 @@ async def list_org_admins(org_id: int, user: User = Depends(verify_jwt_user)):
         return [{"id": u.id, "email": u.email, "first_name": u.first_name, "last_name": u.last_name} for u in users]
 
 @app.post("/orgs/{org_id}/admins")
-async def add_org_admin(org_id: int, payload: OrgAdminAddIn, user: User = Depends(verify_jwt_user)):
+async def add_org_admin(org_id: int, payload: OrgAdminAddIn, user: User = Depends(get_current_user)):
     if not bool(getattr(user, 'site_admin', False)) and not await _is_org_admin(user.id, org_id):
         raise HTTPException(status_code=403, detail="Forbidden")
     # Find or create target user by email
@@ -1812,7 +1867,7 @@ async def add_org_admin(org_id: int, payload: OrgAdminAddIn, user: User = Depend
     return {"ok": True, "user_id": target.id}
 
 @app.delete("/orgs/{org_id}/admins/{target_user_id}")
-async def remove_org_admin(org_id: int, target_user_id: int, user: User = Depends(verify_jwt_user)):
+async def remove_org_admin(org_id: int, target_user_id: int, user: User = Depends(get_current_user)):
     if not bool(getattr(user, 'site_admin', False)) and not await _is_org_admin(user.id, org_id):
         raise HTTPException(status_code=403, detail="Forbidden")
     async with AsyncSessionLocal() as session:

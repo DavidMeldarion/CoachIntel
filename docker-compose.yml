@@ -41,6 +41,18 @@ services:
       - coachintel-backend
       - coachintel-redis
 
+  coachintel-beat:
+    build: ./backend
+    command: celery -A app.worker.celery_app beat --loglevel=debug
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+      - /app/__pycache__ # Prevents host __pycache__ from overwriting container's (optional)
+    depends_on:
+      - coachintel-backend
+      - coachintel-redis
+
   coachintel-db:
     image: postgres:15
     restart: always

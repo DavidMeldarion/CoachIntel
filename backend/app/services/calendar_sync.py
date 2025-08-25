@@ -72,7 +72,11 @@ async def upsert_events_as_meetings(session: AsyncSession, coach_id: int, provid
             eps = conf.get('entryPoints') or []
             if eps:
                 join_url = eps[0].get('uri')
-        stmt = select(Meeting).where(Meeting.coach_id == coach_id, Meeting.external_refs['google_event_id'].astext == ext_id)  # type: ignore
+        # SQLAlchemy 2.x removed .astext on JSON index; use ->> operator for text comparison
+        stmt = select(Meeting).where(
+            Meeting.coach_id == coach_id,
+            Meeting.external_refs.op('->>')('google_event_id') == ext_id
+        )
         existing = (await session.execute(stmt)).scalar_one_or_none()
         created = False
         if existing:
@@ -281,7 +285,7 @@ async def upsert_zoom_meeting(session: AsyncSession, coach_id: int, meeting_id: 
         # Locate existing meeting
         stmt = select(Meeting).where(
             Meeting.coach_id == coach_id,
-            Meeting.external_refs['zoom_meeting_id'].astext == str(meeting_id)  # type: ignore
+            Meeting.external_refs.op('->>')('zoom_meeting_id') == str(meeting_id)
         )
         existing = (await session.execute(stmt)).scalar_one_or_none()
         created = False
@@ -355,7 +359,7 @@ async def upsert_fireflies_meetings(session: AsyncSession, coach_id: int, limit:
                 end = start + timedelta(seconds=int(summ.duration))
             stmt = select(Meeting).where(
                 Meeting.coach_id == coach_id,
-                Meeting.external_refs['fireflies_meeting_id'].astext == str(summ.id)  # type: ignore
+                Meeting.external_refs.op('->>')('fireflies_meeting_id') == str(summ.id)
             )
             existing = (await session.execute(stmt)).scalar_one_or_none()
             created = False
@@ -425,7 +429,7 @@ async def upsert_calendly_event(session: AsyncSession, coach_id: int, event_uuid
         end = _parse_rfc3339(event.end_time)
         stmt = select(Meeting).where(
             Meeting.coach_id == coach_id,
-            Meeting.external_refs['calendly_event_uri'].astext == event.uri  # type: ignore
+            Meeting.external_refs.op('->>')('calendly_event_uri') == event.uri
         )
         existing = (await session.execute(stmt)).scalar_one_or_none()
         created = False

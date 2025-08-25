@@ -200,7 +200,7 @@ def zoom_ingest(payload: dict):  # type: ignore[override]
                     if skip:
                         return 0
                     # Locate meeting by stored zoom_meeting_uuid mapping
-                    stmt = select(MTMeeting).where(MTMeeting.external_refs['zoom_meeting_uuid'].astext == meeting_uuid)  # type: ignore
+                    stmt = select(MTMeeting).where(MTMeeting.external_refs.op('->>')('zoom_meeting_uuid') == meeting_uuid)
                     mt = (await session.execute(stmt)).scalar_one_or_none()
                     if not mt:
                         # Optional fallback: try meeting id (numeric) inside webhook payload object.id
@@ -312,7 +312,7 @@ def _parse_iso_utc(s: Optional[str]) -> datetime.datetime:
         return datetime.datetime.utcnow() - datetime.timedelta(hours=24)
 
 
-@celery_app.task
+@celery_app.task(name="worker.sync_google_calendar")
 def sync_google_calendar(coach_id: int, since_iso: Optional[str] = None):
     """Ingest Google Calendar events for a coach since given ISO timestamp.
 
@@ -341,7 +341,7 @@ def sync_google_calendar(coach_id: int, since_iso: Optional[str] = None):
     return asyncio.run(_run())
 
 
-@celery_app.task
+@celery_app.task(name="worker.sync_zoom_reports")
 def sync_zoom_reports(coach_id: int, meeting_ids: Optional[List[str]] = None):
     """Zoom ingestion using typed client.
 
@@ -360,7 +360,7 @@ def sync_zoom_reports(coach_id: int, meeting_ids: Optional[List[str]] = None):
     return asyncio.run(_run())
 
 
-@celery_app.task
+@celery_app.task(name="worker.reconcile_meetings")
 def reconcile_meetings(coach_id: Optional[int] = None, lookback_hours: int = 168, proximity_minutes: int = 5):
     """Reconcile meetings across providers using multi-tier priority rules.
 
@@ -555,7 +555,7 @@ def reconcile_meetings(coach_id: Optional[int] = None, lookback_hours: int = 168
                 return {"error": str(e), "scanned": scanned, "merged_components": merged_components, "merged_meetings": merged_meetings}
     return asyncio.run(_run())
 
-@celery_app.task
+@celery_app.task(name="worker.rotate_expiring_google_watch_channels")
 def rotate_expiring_google_watch_channels(lead_time_minutes: int = 30) -> dict:
     """Rotate (stop + start) Google Calendar watch channels expiring soon.
 
@@ -627,7 +627,7 @@ def rotate_expiring_google_watch_channels(lead_time_minutes: int = 30) -> dict:
     return asyncio.run(_run())
 
 
-@celery_app.task
+@celery_app.task(name="worker.refresh_external_accounts")
 def refresh_external_accounts():
     """Periodic refresh of expiring ExternalAccount tokens (providers supporting refresh)."""
     session = SessionLocal()
@@ -664,7 +664,7 @@ def refresh_external_accounts():
     finally:
         session.close()
 
-@celery_app.task
+@celery_app.task(name="worker.summarize_missing_transcripts")
 def summarize_missing_transcripts():
     session = SessionLocal()
     try:
@@ -721,7 +721,7 @@ def refresh_google_token_for_user(user, session):
             logging.error(f"[Google Token Refresh] Exception for user {user.email}: {e}")
 
 
-@celery_app.task
+@celery_app.task(name="worker.refresh_all_google_tokens")
 def refresh_all_google_tokens():
     session = SessionLocal()
     try:
@@ -733,7 +733,7 @@ def refresh_all_google_tokens():
     return {"status": "google token refresh complete"}
 
 
-@celery_app.task(bind=True, ignore_result=False)
+@celery_app.task(name="worker.sync_fireflies_meetings", bind=True, ignore_result=False)
 def sync_fireflies_meetings(self, user_email=None, api_key=None):
     session = SessionLocal()
     try:
@@ -855,7 +855,7 @@ def sync_fireflies_meetings(self, user_email=None, api_key=None):
     return {"status": "success"}
 
 
-@celery_app.task(name="ingest_fireflies_transcripts")
+@celery_app.task(name="worker.ingest_fireflies_transcripts")
 def ingest_fireflies_transcripts(coach_id: int | None = None, limit: int = 200):
     """Iterate Fireflies transcripts for one coach (or all) and upsert attendees into client index.
 

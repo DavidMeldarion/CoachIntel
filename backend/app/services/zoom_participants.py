@@ -98,7 +98,10 @@ async def get_past_participants(session: AsyncSession, coach_id: int, meeting_uu
     return [p for p in parts if isinstance(p, dict)]
 
 async def upsert_zoom_participants(session: AsyncSession, coach_id: int, meeting_uuid: str, participants: List[dict]) -> int:
-    stmt = select(Meeting).where(Meeting.coach_id == coach_id, Meeting.external_refs['zoom_meeting_uuid'].astext == meeting_uuid)  # type: ignore
+    stmt = select(Meeting).where(
+        Meeting.coach_id == coach_id,
+        Meeting.external_refs.op('->>')('zoom_meeting_uuid') == meeting_uuid
+    )
     meeting = (await session.execute(stmt)).scalar_one_or_none()
     if not meeting:
         return 0

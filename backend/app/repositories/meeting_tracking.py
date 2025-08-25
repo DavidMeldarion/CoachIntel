@@ -270,8 +270,28 @@ async def resolve_attendee(session: AsyncSession, coach_id: int, attendee: Meeti
         # enrich with missing identifiers
         await enrich_person(session, chosen, email=email_norm, phone=phone_norm)
 
-    # ensure client linkage
-    await ensure_client(session, coach_id, chosen.id)
+    # Attach person to attendee (previously missing -> person_id stayed NULL)
+    if attendee.person_id != chosen.id:
+        attendee.person_id = chosen.id
+        await session.flush()
+
+    # ensure client linkage unless attendee is the coach themselves
+    try:
+        from app.models import User as LegacyUser
+        coach_user = (await session.execute(select(LegacyUser).where(LegacyUser.id == coach_id))).scalar_one_or_none()
+        coach_email_norm = coach_user.email.lower().strip() if coach_user and coach_user.email else None
+    except Exception:  # pragma: no cover
+        coach_user = None
+        coach_email_norm = None
+    is_coach_self = False
+    if coach_email_norm and attendee.raw_email:
+        is_coach_self = attendee.raw_email.lower().strip() == coach_email_norm
+    if not is_coach_self and coach_user and attendee.raw_name and not attendee.raw_email:
+        coach_name = f"{coach_user.first_name} {coach_user.last_name}".strip().lower()
+        if attendee.raw_name.strip().lower() == coach_name:
+            is_coach_self = True
+    if not is_coach_self:
+        await ensure_client(session, coach_id, chosen.id)
     _log_attendee_resolved(attendee.raw_email, str(chosen.id) if chosen else None, matched=chosen is not None)
     return chosen.id
 

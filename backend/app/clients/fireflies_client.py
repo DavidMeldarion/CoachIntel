@@ -4,7 +4,9 @@ from typing import List, Optional, Dict, Any
 import httpx
 import logging
 
-from .base import OAuthExternalClient
+from .base import OAuthExternalClient, AccessToken, TokenSourceError
+from sqlalchemy import select
+from app.models import User
 
 logger = logging.getLogger("fireflies_client")
 
@@ -37,18 +39,46 @@ class FirefliesClient(OAuthExternalClient):
     def __init__(self, session, coach_id: int):
         super().__init__(session, coach_id, provider='fireflies')
 
+    async def _ensure_token(self) -> AccessToken:
+        """Return an AccessToken using the user's stored Fireflies API key if present.
+
+        Precedence:
+          1. User.fireflies_api_key (plain API key stored on profile)
+          2. Fallback to superclass OAuth external account (legacy path)
+
+        Caches the token in self._cached (no expiry for API key)."""
+        # If we already cached (API key or OAuth) return it
+        if self._cached and (self._cached.expires_at is None):
+            return self._cached
+        # Try profile API key
+        try:
+            result = await self.session.execute(select(User.fireflies_api_key).where(User.id == self.coach_id))
+            api_key = result.scalar_one_or_none()
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("Fireflies API key lookup failed for user %s: %s", self.coach_id, e)
+            api_key = None
+        if api_key:
+            self._cached = AccessToken(token=api_key, expires_at=None)
+            return self._cached
+        # Fallback to legacy OAuth workflow (may raise TokenSourceError)
+        try:
+            return await super()._ensure_token()
+        except TokenSourceError:
+            # Provide clearer message specific to Fireflies
+            raise TokenSourceError(f"No Fireflies API key configured and no external account for coach={self.coach_id}")
+
     async def list_meetings(self, limit: int = 25) -> List[FirefliesMeetingSummary]:
         tok = await self._ensure_token()
         query = """
-        query($limit: Int!) {
+        query Transcripts($limit: Int!) {
           transcripts(limit: $limit) {
             id
             title
             date
             duration
             meeting_link
-            summary { keywords action_items outline shorthand_bullet overview }
-            participants { name email user_id }
+            participants
+            summary { overview keywords }
           }
         }
         """
@@ -62,17 +92,16 @@ class FirefliesClient(OAuthExternalClient):
         data = resp.json().get('data', {}).get('transcripts', [])
         out: List[FirefliesMeetingSummary] = []
         for t in data:
-            parts = t.get('participants') or []
-            part_objs = []
-            for p in parts:
-                if isinstance(p, dict):
-                    part_objs.append(FirefliesParticipant(name=p.get('name'), email=p.get('email'), phone=None))
+            part_objs: List[FirefliesParticipant] = []
+            for p in (t.get('participants') or []):
+                if isinstance(p, str):
+                    part_objs.append(FirefliesParticipant(name=None, email=p, phone=None))
             out.append(FirefliesMeetingSummary(
                 id=t.get('id'),
                 title=t.get('title'),
                 date=t.get('date'),
                 duration=t.get('duration'),
-                meeting_link=t.get('meeting_link'),
+                meeting_link=(t.get('meeting_link') or (t.get('meeting_info') or {}).get('meeting_url')),
                 participants=part_objs,
                 summary=t.get('summary') or {},
             ))
@@ -80,34 +109,57 @@ class FirefliesClient(OAuthExternalClient):
 
     async def get_transcript(self, transcript_id: str) -> FirefliesTranscript | None:
         tok = await self._ensure_token()
-        query = """
-        query GetTranscript($id: String!) {
-          transcript(id: $id) {
+        primary_query = """
+        query Transcript($transcriptId: String!) {
+          transcript(id: $transcriptId) {
             id
             title
             date
-            participants { name email user_id }
-            sentences { text speaker_name }
+            participants
+            meeting_attendees { displayName email phoneNumber name }
+            speakers { id name }
+            sentences { index speaker_name text }
+            summary { overview keywords }
+            meeting_link
           }
         }
         """
-        payload = {"query": query, "variables": {"id": transcript_id}}
+        fallback_query = """
+        query Transcript($transcriptId: String!) {
+          transcript(id: $transcriptId) {
+            id
+            title
+            date
+            participants
+            sentences { index speaker_name text }
+            meeting_link
+          }
+        }
+        """
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {tok.token}"}
         async with httpx.AsyncClient(timeout=40.0) as client:
-            resp = await client.post(FIREFLIES_API_URL, json=payload, headers=headers)
+            resp = await client.post(FIREFLIES_API_URL, json={"query": primary_query, "variables": {"transcriptId": transcript_id}}, headers=headers)
+            if resp.status_code >= 400 and 'Cannot query field "attendees"' in resp.text:
+                resp = await client.post(FIREFLIES_API_URL, json={"query": fallback_query, "variables": {"transcriptId": transcript_id}}, headers=headers)
         if resp.status_code >= 400:
             logger.warning("Fireflies get_transcript failed %s: %s", resp.status_code, resp.text[:200])
             return None
         t = resp.json().get('data', {}).get('transcript')
         if not t:
             return None
-        speakers_raw = t.get('participants') or []
-        speakers = []
-        for s in speakers_raw:
-            if isinstance(s, dict):
-                speakers.append(FirefliesParticipant(name=s.get('name'), email=s.get('email'), phone=None))
+        speakers: List[FirefliesParticipant] = []
+        if 'meeting_attendees' in t and isinstance(t.get('meeting_attendees'), list):
+            for s in (t.get('meeting_attendees') or []):
+                if isinstance(s, dict):
+                    name = s.get('name') or s.get('displayName')
+                    speakers.append(FirefliesParticipant(name=name, email=s.get('email'), phone=s.get('phoneNumber')))
+        elif 'participants' in t:
+            parts = t.get('participants') or []
+            for p in parts:
+                if isinstance(p, str):
+                    speakers.append(FirefliesParticipant(name=p, email=None, phone=None))
         sentences = t.get('sentences') or []
-        lines = []
+        lines: List[str] = []
         for s in sentences:
             if isinstance(s, dict):
                 speaker = s.get('speaker_name') or 'Unknown'

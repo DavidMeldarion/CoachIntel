@@ -62,8 +62,11 @@ class User(Base):
     google_refresh_token_encrypted = Column(String, nullable=True)
     google_token_expiry = Column(DateTime, nullable=True)
     
-    # Relationships
+    # Relationships (legacy + new meeting tracking models)
+    # Legacy meetings table (string PK meetings)
     meetings = relationship("Meeting", back_populates="user")
+    # New tracking models expect these back_populates names
+    # Tracking model reverse relationships intentionally omitted to avoid cross-registry mapping issues.
 
     @property
     def name(self):

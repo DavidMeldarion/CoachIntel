@@ -38,7 +38,7 @@ def provider_config(provider: str) -> Dict[str, Any]:
             "client_id": _env("GOOGLE_CLIENT_ID"),
             "client_secret": _env("GOOGLE_CLIENT_SECRET"),
             "scopes": ["https://www.googleapis.com/auth/calendar.readonly", "openid", "email", "profile"],
-            "redirect_uri": _env("GOOGLE_OAUTH_REDIRECT_URI", required=False) or (_env("OAUTH_REDIRECT_BASE") + "/oauth/google/callback"),
+            "redirect_uri": _env("GOOGLE_REDIRECT_URI", required=False) or (_env("OAUTH_REDIRECT_BASE") + "/oauth/google/callback"),
             "response_type": "code",
             "extra_params": {"access_type": "offline", "prompt": "consent"},
         }

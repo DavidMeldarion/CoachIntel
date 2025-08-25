@@ -14,7 +14,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID, ARRAY, CITEXT
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from .models import User  # existing coach/user model (INT PK)
+from .models import User  # existing coach/user model (INT PK)  # imported for type hints only
 
 # ---------------------------------------------------------------------------
 # Naming conventions (important for Alembic autogenerate stability)
@@ -71,12 +71,13 @@ class Client(Base):
     __tablename__ = "clients"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    coach_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    # coach_id kept as plain INT to avoid cross-metadata ForeignKey to legacy users table
+    coach_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
     person_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("persons.id", ondelete="CASCADE"), index=True, nullable=False)
     status: Mapped[str] = mapped_column(ClientStatusEnum, nullable=False, server_default=text("'prospect'"), index=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    coach: Mapped[User] = relationship(back_populates="clients")
+    # Coach relationship omitted (cross-registry) to avoid mapper configuration issues
     person: Mapped[Person] = relationship(back_populates="clients")
 
     __table_args__ = (
@@ -92,7 +93,7 @@ class ExternalAccount(Base):
     __tablename__ = "external_accounts"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    coach_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    coach_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)  # no FK (cross-registry)
     provider: Mapped[str] = mapped_column(String, nullable=False)
     access_token_enc: Mapped[Optional[bytes]] = mapped_column(String, nullable=True)  # stored base64/fernet string
     refresh_token_enc: Mapped[Optional[bytes]] = mapped_column(String, nullable=True)
@@ -109,7 +110,7 @@ class ExternalAccount(Base):
     # Zoom specific: stable user/host identifier for mapping webhooks
     zoom_user_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
 
-    coach: Mapped[User] = relationship(back_populates="external_accounts")
+    # Coach relationship omitted
 
     __table_args__ = (
         UniqueConstraint("coach_id", "provider", name="uq_external_accounts_coach_provider"),
@@ -121,10 +122,10 @@ class ExternalAccount(Base):
 
 
 class Meeting(Base):
-    __tablename__ = "meetings"
+    __tablename__ = "mt_meetings"  # renamed to avoid collision with legacy 'meetings'
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    coach_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    coach_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)  # no FK (cross-registry)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     platform: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -136,7 +137,7 @@ class Meeting(Base):
     transcript_status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     status: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)  # e.g. scheduled, canceled, completed
 
-    coach: Mapped[User] = relationship(back_populates="meetings")
+    # Coach relationship omitted
     attendees: Mapped[List["MeetingAttendee"]] = relationship(back_populates="meeting", cascade="all, delete-orphan")
 
     __table_args__ = (
@@ -152,7 +153,7 @@ class Meeting(Base):
 class MeetingAttendee(Base):
     __tablename__ = "meeting_attendees"
 
-    meeting_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False)
+    meeting_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("mt_meetings.id", ondelete="CASCADE"), nullable=False)
     person_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("persons.id", ondelete="SET NULL"), nullable=True, index=True)
     source: Mapped[str] = mapped_column(String, nullable=False)
     external_attendee_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -195,8 +196,8 @@ class ReviewCandidate(Base):
     __tablename__ = "review_candidates"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    coach_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
-    meeting_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("meetings.id", ondelete="SET NULL"), nullable=True)
+    coach_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)  # no FK (cross-registry)
+    meeting_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("mt_meetings.id", ondelete="SET NULL"), nullable=True)
     attendee_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     raw_email: Mapped[Optional[str]] = mapped_column(CITEXT(), nullable=True)
     raw_phone: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -220,7 +221,7 @@ class ClientStatusAudit(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     client_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), index=True, nullable=False)
-    coach_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    coach_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)  # no FK (cross-registry)
     old_status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     new_status: Mapped[str] = mapped_column(ClientStatusEnum, nullable=False)
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
